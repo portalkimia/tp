@@ -7,28 +7,71 @@ const SHEETS = {
   Checklist: ['id','title','categoryId','categoryName','status','dueDate','owner','estimatedAmount','vendorId','vendorName','notes','updatedAt'],
   Settings: ['key','value','updatedAt'],
 };
-const PAGES = {
-  index: 'index', Budget: 'Budget', Transactions: 'Transactions', Checklist: 'Checklist',
-  Vendors: 'Vendors', Savings: 'Savings', Reports: 'Reports', Settings: 'Settings',
-};
 const DEFAULT_CATEGORIES = [
   ['Venue & Lokasi','Wajib'],['Catering & Jamuan','Wajib'],['Dekorasi','Penting'],['Busana Pengantin','Penting'],
   ['MUA & Hairdo','Penting'],['Foto & Video','Penting'],['Undangan & Web','Opsional'],['Mahar & Seserahan','Wajib'],
   ['Cincin Pernikahan','Wajib'],['Honeymoon','Opsional'],['Transportasi & Hotel','Penting'],['Administrasi & KUA','Wajib'],['Dana Darurat','Wajib']
 ];
+// Apps Script is the spreadsheet API. The public GitHub Pages frontend must
+// authenticate with Google Identity Services; never trust an email from HTML.
+var API_REQUEST_EMAIL_ = '';
 
 function doGet(e) {
-  const email = currentEmail_();
-  if (!isAllowed_(email)) return HtmlService.createHtmlOutput(accessDenied_());
-  const requested = String((e && e.parameter && e.parameter.page) || 'index');
-  const aliases = { Dashboard: 'index', Index: 'index', 'anggaran-rab':'Budget', transaksi:'Transactions', 'checklist-persiapan':'Checklist', 'vendor-pembayaran':'Vendors', tabungan:'Savings', laporan:'Reports', pengaturan:'Settings' };
-  const page = aliases[requested] || requested;
-  const safePage = Object.prototype.hasOwnProperty.call(PAGES, page) ? page : 'index';
-  const template = HtmlService.createTemplateFromFile(PAGES[safePage]);
-  template.appUrl = ScriptApp.getService().getUrl();
-  template.viewerEmail = email;
-  return template.evaluate().setTitle('Wedding Fund').addMetaTag('viewport', 'width=device-width, initial-scale=1');
+  if (e && e.parameter && e.parameter.api === '1') return apiGet_(e);
+  return ContentService.createTextOutput('Wedding Fund API. Buka frontend dari GitHub Pages.').setMimeType(ContentService.MimeType.TEXT);
 }
+
+function doPost(e) {
+  try {
+    const p = (e && e.parameter) || {};
+    const user = verifyGoogleIdToken_(p.idToken);
+    API_REQUEST_EMAIL_ = user.email;
+    const payload = p.payload ? JSON.parse(p.payload) : {};
+    let result;
+    if (p.action === 'save') result = saveRecord(String(payload.sheet || ''), payload.record || {});
+    else if (p.action === 'delete') result = deleteRecord(String(payload.sheet || ''), String(payload.id || ''));
+    else if (p.action === 'saveSettings') result = saveSettings(payload.values || {});
+    else throw new Error('Aksi API tidak dikenal.');
+    const output = {ok:true,result:result};
+    if (p.requestId) CacheService.getScriptCache().put('wf:'+p.requestId, JSON.stringify(output), 60);
+    return jsonOutput_(output);
+  } catch (err) {
+    const output = {ok:false,error:String(err && err.message || err)};
+    const requestId = e && e.parameter && e.parameter.requestId;
+    if (requestId && /^[a-f0-9-]{20,50}$/i.test(requestId)) CacheService.getScriptCache().put('wf:'+requestId, JSON.stringify(output), 60);
+    return jsonOutput_(output);
+  }
+}
+
+function apiGet_(e) {
+  const callback = String(e.parameter.callback || '');
+  if (!/^[A-Za-z_$][0-9A-Za-z_$\.]{0,80}$/.test(callback)) return jsonOutput_({ok:false,error:'Callback tidak valid.'});
+  try {
+    const user = verifyGoogleIdToken_(e.parameter.idToken);
+    API_REQUEST_EMAIL_ = user.email;
+    let result;
+    if (e.parameter.action === 'snapshot') result = getAppSnapshot();
+    else if (e.parameter.action === 'status') result = getAppStatus();
+    else if (e.parameter.action === 'result') { const saved=CacheService.getScriptCache().get('wf:'+String(e.parameter.requestId||'')); if(!saved)throw new Error('Operasi belum selesai, coba lagi.'); result=JSON.parse(saved); }
+    else throw new Error('Aksi API tidak dikenal.');
+    return ContentService.createTextOutput(callback+'('+JSON.stringify({ok:true,result:result})+');').setMimeType(ContentService.MimeType.JAVASCRIPT);
+  } catch (err) { return ContentService.createTextOutput(callback+'('+JSON.stringify({ok:false,error:String(err && err.message || err)})+');').setMimeType(ContentService.MimeType.JAVASCRIPT); }
+}
+
+function verifyGoogleIdToken_(token) {
+  if (!token) throw new Error('Silakan masuk dengan akun Google.');
+  const clientId = PropertiesService.getScriptProperties().getProperty('OAUTH_CLIENT_ID');
+  if (!clientId) throw new Error('OAUTH_CLIENT_ID belum disetel di Script Properties.');
+  const response = UrlFetchApp.fetch('https://oauth2.googleapis.com/tokeninfo?id_token='+encodeURIComponent(token), {muteHttpExceptions:true});
+  if (response.getResponseCode() !== 200) throw new Error('Sesi Google tidak valid atau sudah berakhir.');
+  const claims = JSON.parse(response.getContentText());
+  if (claims.aud !== clientId || claims.iss !== 'https://accounts.google.com' || Number(claims.exp) * 1000 <= Date.now() || claims.email_verified !== 'true') throw new Error('Identitas Google tidak dapat diverifikasi.');
+  const email = String(claims.email || '').trim().toLowerCase();
+  if (!isAllowed_(email)) throw new Error('Akun Google ini tidak diizinkan.');
+  return {email:email};
+}
+
+function jsonOutput_(value) { return ContentService.createTextOutput(JSON.stringify(value)).setMimeType(ContentService.MimeType.JSON); }
 
 function setupDatabase() {
   requireAllowed_();
@@ -146,8 +189,6 @@ function saveSettings(values) {
   } finally {lock.releaseLock();}
 }
 
-function include(filename) { return HtmlService.createHtmlOutputFromFile(filename).getContent(); }
-
 function readRecords_(name) {
   if (!Object.prototype.hasOwnProperty.call(SHEETS,name) || name==='Settings') throw new Error('Jenis data tidak diizinkan.');
   const sheet=getSheet_(name); const values=sheet.getDataRange().getValues(); if(values.length<2)return [];
@@ -220,7 +261,7 @@ function spreadsheet_(){const id=PropertiesService.getScriptProperties().getProp
 function assertUnreferenced_(field,id){['Budget','Transactions','Vendors','Checklist'].forEach(function(name){readRecords_(name).forEach(function(r){if(String(r[field]||'')===String(id))throw new Error('Data masih dipakai di '+name+'. Hapus atau ubah relasinya dahulu.');});});}
 function currentEmail_(){return String(Session.getActiveUser().getEmail()||'').trim().toLowerCase();}
 function isAllowed_(email){const configured=PropertiesService.getScriptProperties().getProperty('ALLOWED_EMAILS')||'';const allowed=configured.split(',').map(function(x){return x.trim().toLowerCase();}).filter(Boolean);return Boolean(email&&allowed.indexOf(email.toLowerCase())!==-1);}
-function requireAllowed_(){const email=currentEmail_();if(!isAllowed_(email))throw new Error('Akun Google ini tidak diizinkan.');return email;}
+function requireAllowed_(){const email=API_REQUEST_EMAIL_||currentEmail_();if(!isAllowed_(email))throw new Error('Akun Google ini tidak diizinkan.');return email;}
 function sanitizeCell_(value){if(typeof value==='string'&&/^[=+@]/.test(value))return "'"+value;return value;}
 function serializeCell_(value){return value instanceof Date?Utilities.formatDate(value,Session.getScriptTimeZone(),"yyyy-MM-dd'T'HH:mm:ssXXX"):value;}
 function accessDenied_(){return '<!doctype html><html lang="id"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Akses dibatasi</title><body style="font:16px Arial,sans-serif;background:#faf7f5;color:#2d3748;display:grid;min-height:90vh;place-items:center"><main style="max-width:480px;padding:32px;background:white;border-radius:20px"><h1>Akses dibatasi</h1><p>Aplikasi ini hanya tersedia untuk akun Google yang diizinkan.</p><p>Pastikan Anda masuk dengan akun yang sudah didaftarkan oleh pemilik aplikasi.</p></main></body></html>';}

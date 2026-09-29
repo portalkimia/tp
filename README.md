@@ -1,61 +1,52 @@
 # Wedding Fund
 
-Aplikasi pencatatan anggaran pernikahan untuk dua akun Google. Dashboard dan tujuh menu fitur disajikan oleh satu Google Apps Script Web App; Google Sheet adalah sumber data bersama. Repositori ini menyimpan source dan tidak dipakai sebagai GitHub Pages karena aplikasi harus membatasi akses berdasarkan akun Google.
+Wedding Fund memakai **GitHub Pages sebagai frontend publik** dan **Google Apps Script sebagai backend API**. Pengunjung umum hanya melihat layar login. Hanya dua akun Google yang ditetapkan di allowlist API dapat membaca atau mengubah Google Sheet. Jangan simpan password, token, email allowlist, atau ID spreadsheet di source frontend.
 
-## Struktur upload
+## Struktur source
 
-Apps Script source berada di root repo supaya `index.html` menjadi entry page dan file `.gs`, HTML, serta manifest mudah di-push atau disinkronkan:
+- `index.html` + `Client.html`: UI dan aplikasi satu halaman; Dashboard, RAB, transaksi, checklist, vendor, tabungan, laporan, dan pengaturan.
+- `config.js`: konfigurasi publik berisi Google OAuth Client ID dan URL API GAS; keduanya bukan secret.
+- `Code.gs`: backend spreadsheet dan endpoint API, autentikasi ID token Google, serta validasi data.
+- `appsscript.json`: Apps Script Web App dijalankan sebagai pemilik deployment, tetapi setiap API memverifikasi ID token Google dan allowlist sebelum akses data.
+- `Budget.html`, `Transactions.html`, `Checklist.html`, `Vendors.html`, `Savings.html`, `Reports.html`, `Settings.html`: layar referensi Stitch; runtime aplikasi aktif dirender oleh `Client.html`.
+- `github-pages/`: output statis untuk publikasi GitHub Pages.
 
-- `index.html`: Dashboard dan halaman awal.
-- `Budget.html`, `Transactions.html`, `Checklist.html`, `Vendors.html`, `Savings.html`, `Reports.html`, `Settings.html`: menu fitur.
-- `Client.html`: logika tampilan dan pemanggilan backend bersama.
-- `Code.gs`: router, otorisasi, validasi, integrasi Sheet, dan API data.
-- `appsscript.json`: manifest Apps Script.
-- `docs/design.md`: catatan referensi desain Stitch.
-- `tools/build-database.mjs`: utilitas pembuat workbook awal.
+## Menyiapkan frontend GitHub Pages
 
-Semua menu memakai URL Apps Script yang sama dengan parameter halaman. Jangan aktifkan GitHub Pages untuk source ini: source root adalah Apps Script template dan GitHub Pages tidak memberi allowlist dua akun Google. Website yang digunakan adalah deployment GAS.
+1. Jalankan `node tools/build-github-pages.mjs`. Hasilnya ada di folder `github-pages/`.
+2. Isi `github-pages/config.js` dengan OAuth Client ID jenis **Web application** dan URL Web App GAS yang berakhiran `/exec`.
+3. Unggah **isi** folder `github-pages/` ke root repository yang dipublikasikan GitHub Pages, lalu commit `index.html` dan `config.js`. Jangan upload file root source `index.html` sebelum dibuild. Jangan upload `.clasp.json`, credential, atau spreadsheet.
+4. Tambahkan origin situs GitHub Pages yang tepat sebagai **Authorized JavaScript origin** di OAuth Client Google. Untuk repo `tp`, origin umumnya `https://portalkimia.github.io` (tanpa `/tp`).
 
-## Upload manual ke GitHub
+> GitHub Pages publik menampilkan layar login kepada siapa pun. GitHub Pages bukan halaman privat: pengunjung tetap dapat membuka shell/login. Data tetap ditolak di GAS kecuali token berasal dari salah satu email allowlist. Untuk membatasi akses ke halaman itu sendiri, diperlukan GitHub Enterprise Cloud private Pages atau layanan hosting dengan access gateway.
 
-1. Buat repository **Private** dan biarkan kosong. Pilih akun pribadi bila repository hanya boleh terlihat oleh Anda dan pasangan; repository milik organisasi dapat memiliki administrator organisasi yang juga bisa mengaksesnya.
-2. Dari halaman repository, pilih **Add file → Upload files**. Unggah file source yang ada di root dan folder `docs/` serta `tools/`, lalu commit ke branch `main`. Pertahankan `index.html` di root repository.
-3. Bila file dot tidak muncul di pemilih file, tambahkan `.gitignore` dan `.claspignore` sebagai file terpisah. Jangan unggah `.clasp.json`, `.clasprc.json`, `.env`, atau data spreadsheet.
-4. Jangan aktifkan GitHub Pages. HTML ini memakai templating dan `google.script.run`, sehingga GitHub menyimpan source saja; jalankan aplikasi melalui deployment GAS.
+## Menyiapkan backend GAS satu kali
 
-## Modul dan hubungan data
+1. Upload hanya `Code.gs` dan `appsscript.json` ke proyek Apps Script. File HTML **tidak perlu dipasang di GAS**.
+2. Atur Script Properties:
+   - `SPREADSHEET_ID`: ID spreadsheet Wedding Fund.
+   - `ALLOWED_EMAILS`: dua email Google yang diizinkan, dipisah koma.
+   - `OAUTH_CLIENT_ID`: OAuth Client ID yang sama dengan frontend.
+3. Jalankan `setupDatabase()` sebagai pemilik spreadsheet agar tab, header, dropdown, kategori awal, dan trigger input langsung Sheet disiapkan.
+4. Deploy sebagai Web App: **Execute as me** dan akses **Anyone** (anonymous). Endpoint memang dapat dijangkau publik, tetapi tanpa ID token Google yang valid, audience yang cocok, dan email allowlist, operasi data ditolak.
+5. Salin URL `/exec` deployment ke `config.js` pada folder `github-pages/`. Jika source GAS berubah, buat deployment version baru.
 
-- `Categories` adalah daftar kategori RAB dengan prioritas. Setup mengisinya dengan nama kategori awal saja; tidak memasukkan transaksi/angka contoh Stitch.
-- `Budget` menyimpan rencana nominal per kategori.
-- `Transactions` menyimpan pemasukan/pengeluaran, PIC, metode, kategori, vendor, dan tautan bukti. Pengeluaran bertaut kategori menjadi realisasi RAB; transaksi vendor mengurangi sisa kontraknya.
-- `Savings` menyimpan setoran, sumber, PIC, rekening, dan verifikasi.
-- `Vendors` menyimpan kontrak dan tenggat. Nilai terbayar dihitung dari transaksi vendor, tidak dimasukkan dua kali.
-- `Checklist` menyimpan tugas, status, PIC, tenggat, estimasi, kategori, dan vendor.
-- `Settings` menyimpan profil pasangan, tanggal acara, target, dan preferensi pengingat.
+Jangan mengubah deployment menjadi **execute as user accessing**: frontend GitHub mengirim token identitas Google, bukan sesi cookie Apps Script. Backend harus berjalan sebagai pemilik agar request lintas origin dapat diproses, lalu melakukan verifikasi token dan allowlist sendiri.
 
-Aplikasi menyediakan buat/lihat/ubah/hapus, filter PIC/tanggal/pencarian di daftar transaksi dan checklist, tampilan checklist daftar/Kanban/kalender, pembayaran vendor yang otomatis membuat transaksi, ringkasan Dashboard, laporan, CSV, cetak/PDF via browser, dan unduh backup JSON. Tautan bukti disimpan sebagai URL agar aplikasi tidak memerlukan izin Drive.
+## Data dan alur
 
-## Input melalui website atau Google Sheet
+- `Categories` dan `Budget`: kategori dan target biaya.
+- `Transactions`: pemasukan/pengeluaran yang menambah realisasi kategori; pembayaran vendor ditautkan dengan ID vendor.
+- `Vendors`: nilai kontrak dan tenggat; jumlah dibayar/sisa dihitung dari transaksi.
+- `Savings`: setoran tabungan bersama.
+- `Checklist`: tugas, PIC, status, estimasi, kategori, vendor, dan tenggat.
+- `Settings`: profil pasangan, tanggal acara, target, dan pengingat aplikasi.
 
-Kedua cara memakai tab yang sama. Dari website, gunakan form pada menu. Untuk input langsung di Sheet, gunakan nama kategori/vendor yang tersedia pada kolom `categoryName`/`vendorName`; dropdown membantu memilih nama. Trigger spreadsheet akan mengisi ID relasi, ID baris baru, dan waktu perubahan. Setup membuat tab/header, validasi pilihan PIC/status/jenis/metode, dan kategori awal. Jangan menghapus atau mengganti header.
+Input melalui website atau langsung pada tab spreadsheet memakai sumber data yang sama. Trigger Sheet menambahkan ID dan menghubungkan kategori/vendor berdasarkan nama. Kedua akun memiliki hak yang sama; PIC hanya label atribusi.
 
-Kolom hubungan `categoryId`/`vendorId` dan `id` dibuat otomatis oleh aplikasi/trigger. Untuk penghapusan data yang masih dipakai, gunakan website agar perlindungan relasi berjalan; jangan hapus baris kategori/vendor yang masih memiliki transaksi atau tugas.
+## Pemeriksaan sebelum digunakan
 
-## Konfigurasi GAS
-
-1. Buka proyek Apps Script standalone yang disiapkan untuk Wedding Fund, lalu masukkan file root `Code.gs`, semua `*.html`, dan `appsscript.json`.
-2. Pada Script Properties, isi `SPREADSHEET_ID` dengan ID Sheet Wedding Fund Database dan `ALLOWED_EMAILS` dengan dua akun yang diizinkan, dipisahkan koma. Jangan menaruh email atau ID spreadsheet di source repo.
-3. Jalankan `setupDatabase()` dari akun pemilik, setujui scope Spreadsheet, email akun, dan pemasangan trigger spreadsheet. Pastikan zona waktu Asia/Jakarta.
-4. Deploy sebagai Web App: execute as **User accessing the web app**, akses **Anyone with a Google account**. Kode tetap menolak semua email di luar allowlist dan menolak bila email kosong.
-5. Bagikan Google Sheet sebagai Editor hanya ke akun pasangan. Kedua pengguna perlu izin Sheet karena web app berjalan sebagai pengguna yang login.
-6. Setiap perubahan source/access memerlukan versi deployment baru. Bagikan URL `/exec` hanya setelah uji akses dua akun dan penolakan akun lain.
-
-Repositori GitHub harus privat dan hanya mengundang pasangan sebagai kolaborator. Jangan menambahkan `.clasp.json`, token login, Script Properties, atau data transaksi ke repo. `.claspignore` sudah mengikutkan file Apps Script di root saja.
-
-## Pengujian penerimaan
-
-- Tambah/ubah/hapus kategori, anggaran, transaksi, tabungan, vendor, dan checklist; lihat perubahan pada modul terkait dan Dashboard.
-- Bayar vendor sebagian dan lunas; pastikan transaksi, nilai terbayar, saldo tagihan, RAB, dan laporan konsisten. Penambahan yang melebihi kontrak harus ditolak.
-- Tambahkan kategori, vendor, transaksi, dan tugas langsung di Sheet; pastikan trigger memberi ID dan hubungan nama-ke-ID terbaca di website.
-- Uji filter tanggal/PIC, Kanban/kalender, CSV, cetak/PDF, serta backup JSON.
-- Uji kedua akun allowlist; akun lain atau email kosong harus ditolak. Bersihkan baris uji setelah selesai.
+- Uji login kedua akun yang diizinkan; akun Google lain harus ditolak oleh API.
+- Coba snapshot, tambah/ubah/hapus baris, pembayaran vendor, dan perubahan lewat Sheet.
+- Pastikan sisa kontrak vendor, realisasi kategori, dashboard, laporan, CSV, dan backup sesuai spreadsheet.
+- Jangan masukkan data keuangan nyata sebelum deployment baru dan OAuth origin telah dikonfigurasi serta pengujian akses lulus.
