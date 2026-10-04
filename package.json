@@ -1,0 +1,19 @@
+{
+  "name": "wedding-fund-tracker-app",
+  "version": "1.0.0",
+  "description": "Aplikasi Web Wedding Funds Tracker terintegrasi Google Sheets & Google Apps Script",
+  "type": "module",
+  "scripts": {
+    "start": "node tools/serve.mjs",
+    "serve": "node tools/serve.mjs",
+    "build": "node tools/build-github-pages.mjs"
+  },
+  "keywords": [
+    "wedding",
+    "funds-tracker",
+    "google-apps-script",
+    "google-sheets"
+  ],
+  "author": "",
+  "license": "MIT"
+}
