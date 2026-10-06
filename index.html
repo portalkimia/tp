@@ -176,7 +176,7 @@ function githubApi_(method, args) {
 }
 
 function postApi_(action, payload) {
-  const cfg = window.WF_CONFIG || {};
+  const cfg = window.WF_CONFIG || window.CONFIG || {};
   if (!cfg.apiUrl || !/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(cfg.apiUrl)) {
     return Promise.reject(new Error('Alamat API GAS belum diisi di config.js.'));
   }
@@ -213,7 +213,7 @@ function postApi_(action, payload) {
 
 function jsonp_(params) {
   return new Promise((resolve, reject) => {
-    const cfg = window.WF_CONFIG || {};
+    const cfg = window.WF_CONFIG || window.CONFIG || {};
     const cb = 'wfcb_' + crypto.randomUUID().replace(/-/g, '');
     const script = document.createElement('script');
     const timer = setTimeout(() => finish(new Error('API GAS tidak merespons.')), 20000);
@@ -350,9 +350,10 @@ function renderLoginBox_() {
     try {
       const credentials = Object.fromEntries(new FormData(form));
       const u = String(credentials.username || '').trim().toLowerCase();
+      const cfg = window.WF_CONFIG || window.CONFIG || {};
 
       // Demo login shortcut or fallback if GAS backend is not connected yet
-      if (u === 'demo' || (CONFIG.GAS_WEB_APP_URL && CONFIG.GAS_WEB_APP_URL.includes('PASTE_WEB_APP_URL'))) {
+      if (u === 'demo' || (!cfg.apiUrl || cfg.apiUrl.includes('PASTE_WEB_APP_URL'))) {
         isDemo = true;
         sessionStorage.setItem('wf-demo-mode', 'true');
         sessionToken = 'demo-session';
