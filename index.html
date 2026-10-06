@@ -199,7 +199,8 @@ function postApi_(action, payload) {
     let attempts = 0;
     const poll = () => jsonp_({ action: 'result', requestId }).then(x => {
       if (x && x.ok === false) throw new Error(x.error || 'Operasi gagal.');
-      resolve(x.result);
+      const val = (x && typeof x === 'object' && 'result' in x && x.result !== undefined && !('sessionToken' in x)) ? x.result : x;
+      resolve(val);
     }).catch(err => {
       if (++attempts < 15 && /belum selesai/i.test(err.message)) {
         setTimeout(poll, 800);
@@ -365,13 +366,21 @@ function renderLoginBox_() {
       }
 
       const auth = await postApi_('login', credentials);
+      if (!auth || !auth.sessionToken) {
+        throw new Error('Gagal mendapatkan sesi login dari server. Pastikan username dan password benar.');
+      }
       sessionToken = auth.sessionToken;
       sessionStorage.setItem('wf-session-token', sessionToken);
+      if (auth.role) {
+        owner = auth.role === 'cowo' ? 'Cowo' : auth.role === 'cewe' ? 'Cewe' : 'Bersama';
+        localStorage.setItem('wf-owner', owner);
+      }
       db = await api('getAppSnapshot');
       document.body.classList.add('wf-authenticated');
       main.innerHTML = '<div id="wf-root" class="w-full"></div>';
       root = document.getElementById('wf-root');
       render();
+      if (badge) badge.textContent = 'Data tersambung · ' + owner;
     } catch (err) {
       sessionToken = '';
       sessionStorage.removeItem('wf-session-token');
