@@ -2551,7 +2551,7 @@ function render() {
 async function refresh() {
   db = await api('getAppSnapshot');
   render();
-  if (badge) badge.textContent = 'Data tersambung · ' + owner;
+  if (badge) badge.textContent = (isDemo ? 'Mode Demo (Lokal)' : 'Data tersambung') + ' · ' + owner;
 }
 
 function close() {
