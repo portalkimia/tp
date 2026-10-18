@@ -7,7 +7,7 @@
  *
  * FITUR UTAMA:
  * 1. Otentikasi dua mempelai (Cowo & Cewe) via Script Properties & Session Token (6 Jam).
- * 2. CRUD penuh untuk 7 Tabel: Categories, Budget, Transactions, Savings, Vendors, Checklist, Settings.
+ * 2. CRUD penuh untuk data keuangan, vendor, checklist, moodboard, dan pengaturan.
  * 3. Otomatisasi setupDatabase(): membuat tabel, format header, dropdown validasi, & trigger.
  * 4. Kompatibel mode container-bound (Extensions > Apps Script) maupun standalone (SPREADSHEET_ID).
  * 5. Proteksi injeksi formula (=+@), pembatasan rate limit login, dan komparasi password konstan.
@@ -21,6 +21,7 @@ const SHEETS = {
   Savings: ['id', 'date', 'source', 'amount', 'account', 'owner', 'description', 'verified', 'proofLink', 'updatedAt'],
   Vendors: ['id', 'name', 'categoryId', 'categoryName', 'contact', 'contractAmount', 'invoiceLink', 'nextDueDate', 'notes', 'updatedAt'],
   Checklist: ['id', 'title', 'categoryId', 'categoryName', 'status', 'dueDate', 'owner', 'estimatedAmount', 'vendorId', 'vendorName', 'notes', 'updatedAt'],
+  Moodboard: ['id', 'title', 'section', 'imageUrl', 'sourceUrl', 'color', 'notes', 'vendorId', 'sortOrder', 'updatedAt'],
   Settings: ['key', 'value', 'updatedAt'],
 };
 
@@ -445,7 +446,8 @@ function saveSettings(values) {
 
   const allowed = [
     'partnerOneName', 'partnerTwoName', 'weddingDate', 'guestTarget',
-    'budgetTarget', 'motto', 'currency', 'remindersEnabled', 'reminderDays', 'roleLabels'
+    'budgetTarget', 'motto', 'currency', 'remindersEnabled', 'reminderDays', 'roleLabels',
+    'moodboardTheme', 'moodboardBrief', 'moodboardPalette'
   ];
 
   const lock = LockService.getScriptLock();
@@ -563,7 +565,8 @@ function validateRecord_(sheetName, r) {
     Transactions: ['date', 'type', 'description', 'amount'],
     Savings: ['date', 'source', 'amount'],
     Vendors: ['name'],
-    Checklist: ['title', 'status']
+    Checklist: ['title', 'status'],
+    Moodboard: ['title', 'section']
   }[sheetName] || [];
 
   required.forEach(function(key) {
@@ -600,6 +603,20 @@ function validateRecord_(sheetName, r) {
 
   if (r.owner && ['Cowo', 'Cewe', 'Bersama', 'Keluarga'].indexOf(r.owner) < 0) {
     throw new Error('PIC penanggung jawab tidak valid.');
+  }
+
+  if (sheetName === 'Moodboard') {
+    ['imageUrl', 'sourceUrl'].forEach(function(key) {
+      if (r[key] && !/^https:\/\/[^\s<>"']+$/i.test(String(r[key]))) {
+        throw new Error('Tautan moodboard harus memakai HTTPS.');
+      }
+    });
+    if (r.color && !/^#[0-9a-f]{6}$/i.test(String(r.color))) {
+      throw new Error('Warna harus berformat #RRGGBB.');
+    }
+    if (r.sortOrder !== undefined && r.sortOrder !== '' && (!Number.isInteger(Number(r.sortOrder)) || Number(r.sortOrder) < 0)) {
+      throw new Error('Urutan moodboard harus bilangan bulat nol atau lebih.');
+    }
   }
 }
 
@@ -909,7 +926,19 @@ function validateRecordHeaders_(name) {
 
 function getSheet_(name) {
   validateRecordHeaders_(name);
-  const sheet = spreadsheet_().getSheetByName(name);
+  const ss = spreadsheet_();
+  let sheet = ss.getSheetByName(name);
+  if (!sheet && name === 'Moodboard') {
+    try {
+      sheet = ss.insertSheet(name);
+      sheet.getRange(1, 1, 1, SHEETS[name].length).setValues([SHEETS[name]]);
+      sheet.setFrozenRows(1);
+      sheet.getRange(1, 1, 1, SHEETS[name].length).setFontWeight('bold').setBackground('#8e464c').setFontColor('#ffffff');
+    } catch (err) {
+      sheet = ss.getSheetByName(name);
+      if (!sheet) throw err;
+    }
+  }
   if (!sheet) throw new Error('Tab ' + name + ' belum dibuat di Google Sheets. Silakan jalankan setupDatabase().');
   return sheet;
 }
@@ -933,7 +962,7 @@ function spreadsheet_() {
 }
 
 function assertUnreferenced_(field, id) {
-  ['Budget', 'Transactions', 'Vendors', 'Checklist'].forEach(function(name) {
+  ['Budget', 'Transactions', 'Vendors', 'Checklist', 'Moodboard'].forEach(function(name) {
     readRecords_(name).forEach(function(r) {
       if (String(r[field] || '') === String(id)) {
         throw new Error('Data masih digunakan pada tabel ' + name + '. Hapus atau ubah relasi data terlebih dahulu.');

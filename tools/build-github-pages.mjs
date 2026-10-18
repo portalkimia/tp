@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, writeFile, access } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -30,7 +30,14 @@ const uploadFiles = [
   'Budget.html','Transactions.html','Checklist.html','Vendors.html','Savings.html','Reports.html','Settings.html'
 ];
 await mkdir(upload, { recursive: true });
-for (const file of uploadFiles) await copyFile(resolve(root, file), resolve(upload, file));
+for (const file of uploadFiles) {
+  const source = resolve(root, file);
+  try { await access(source); } catch (err) {
+    if (['.gitignore', '.claspignore'].includes(file) && err.code === 'ENOENT') continue;
+    throw err;
+  }
+  await copyFile(source, resolve(upload, file));
+}
 for (const dir of ['tools','docs']) await mkdir(resolve(upload, dir), { recursive: true });
 for (const file of ['build-github-pages.mjs','build-database.mjs','index-shell.html','serve.mjs','test-fixes.mjs'])
   await copyFile(resolve(root, 'tools', file), resolve(upload, 'tools', file));

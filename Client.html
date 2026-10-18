@@ -13,6 +13,7 @@ let page = ({
   'vendor-pembayaran': 'Vendors',
   tabungan: 'Savings',
   laporan: 'Reports',
+  moodboard: 'Moodboard',
   pengaturan: 'Settings'
 })[q.get('page')] || q.get('page') || 'index';
 
@@ -23,6 +24,7 @@ const routes = [
   ['Checklist', 'Checklist Persiapan', 'checklist-persiapan'],
   ['Vendors', 'Vendor & Pembayaran', 'vendor-pembayaran'],
   ['Savings', 'Tabungan', 'tabungan'],
+  ['Moodboard', 'Moodboard', 'moodboard'],
   ['Reports', 'Laporan', 'laporan'],
   ['Settings', 'Pengaturan', 'pengaturan']
 ];
@@ -96,6 +98,10 @@ const DEMO_DB = {
     { id: 'chk-4', title: 'Test Food Menu Catering 8 Pos Gubukan', categoryId: 'cat-2', status: 'Selesai', dueDate: '2025-05-15', owner: 'Bersama', estimatedAmount: 500000, vendorId: 'ven-2', notes: 'Sate padang & zupa soup sudah disetujui orang tua' },
     { id: 'chk-5', title: 'Pendaftaran Dokumen Nikah ke KUA', categoryId: 'cat-12', status: 'Belum mulai', dueDate: '2025-07-15', owner: 'Cowo', estimatedAmount: 600000, vendorId: '', notes: 'Surat N1-N4 dari kelurahan & tes kesehatan Puskesmas' }
   ],
+  Moodboard: [
+    { id: 'mood-demo-1', title: 'Nuansa meja resepsi', section: 'Dekorasi', imageUrl: '', sourceUrl: '', color: '#D7BFA7', notes: 'Bunga putih, lilin hangat, dan kain linen tanpa kilau.', vendorId: '', sortOrder: 1 },
+    { id: 'mood-demo-2', title: 'Pencahayaan malam', section: 'Venue', imageUrl: '', sourceUrl: '', color: '#8E6E61', notes: 'Cahaya warm white, hindari lampu biru atau strobo.', vendorId: '', sortOrder: 2 }
+  ],
   Settings: {
     partnerOneName: 'Dika',
     partnerTwoName: 'Nisa',
@@ -104,7 +110,10 @@ const DEMO_DB = {
     guestTarget: 500,
     motto: 'Menuju Hari Bahagia Bersama',
     remindersEnabled: true,
-    reminderDays: 7
+    reminderDays: 7,
+    moodboardTheme: 'Hangat, intim, dan elegan',
+    moodboardBrief: 'Dominasi warna ivory dan cokelat hangat. Kesan yang diinginkan sederhana, personal, dan nyaman untuk keluarga.',
+    moodboardPalette: '#F6F0E8, #D7BFA7, #8E6E61'
   }
 };
 
@@ -424,6 +433,7 @@ let checkStatus = 'Semua';
 let priorityFilter = 'all';
 let txType = 'Semua';
 let report = { from: '', to: '', owner: 'Semua' };
+let moodboardVendor = 'all';
 
 function getCategoryIcon(name) {
   const n = String(name || '').toLowerCase();
@@ -468,6 +478,8 @@ function resolvePage_(name) {
     savings: 'Savings',
     laporan: 'Reports',
     reports: 'Reports',
+    moodboard: 'Moodboard',
+    konsep: 'Moodboard',
     pengaturan: 'Settings',
     settings: 'Settings'
   };
@@ -692,10 +704,28 @@ const modelFields = {
     fld('Estimasi biaya (Rp)', 'estimatedAmount', r.estimatedAmount || 0, 'number'),
     fld('Vendor terkait', 'vendorId', r.vendorId, 'vendor'),
     fld('Catatan detail & instruksi', 'notes', r.notes, 'textarea', null, true)
+  ],
+  Moodboard: r => [
+    fld('Judul referensi', 'title', r.title, 'text', null, true, true),
+    fld('Bagian konsep', 'section', r.section || 'Dekorasi', 'select', ['Dekorasi', 'Venue', 'Busana', 'Makeup', 'Foto & Video', 'Undangan', 'Catering', 'Lainnya'].map(x => ({ value: x, label: x })), false, true),
+    fld('Vendor tujuan', 'vendorId', r.vendorId, 'vendor'),
+    fld('Urutan tampilan', 'sortOrder', r.sortOrder || 0, 'number'),
+    fld('URL gambar langsung (HTTPS)', 'imageUrl', r.imageUrl, 'url', null, true),
+    fld('URL sumber / referensi (HTTPS)', 'sourceUrl', r.sourceUrl, 'url', null, true),
+    fld('Warna utama (contoh #D7BFA7)', 'color', r.color || '#D7BFA7', 'text'),
+    fld('Arahan untuk vendor', 'notes', r.notes, 'textarea', null, true)
   ]
 };
 
 function updateHeaderAndAside_() {
+  const nav = document.querySelector('aside nav');
+  if (nav && !nav.querySelector('[data-path="moodboard"]')) {
+    const link = document.createElement('a');
+    link.href = '?page=Moodboard';
+    link.dataset.path = 'moodboard';
+    link.innerHTML = '<span class="material-symbols-outlined text-[20px]">palette</span><span class="font-label-lg text-label-lg">Moodboard</span>';
+    nav.insertBefore(link, nav.querySelector('[data-path="laporan"]'));
+  }
   const s = db.Settings || {};
   const partner1 = s.partnerOneName || 'Dika';
   const partner2 = s.partnerTwoName || 'Nisa';
@@ -2152,6 +2182,65 @@ function savings() {
 }
 
 /* ==========================================================================
+   MOODBOARD & VENDOR CREATIVE BRIEF
+   ========================================================================== */
+function moodboard() {
+  const settings = db.Settings || {};
+  const all = (db.Moodboard || []).slice().sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0) || String(a.title).localeCompare(String(b.title)));
+  const shown = moodboardVendor === 'all' ? all : all.filter(x => !x.vendorId || String(x.vendorId) === moodboardVendor);
+  const vendor = (db.Vendors || []).find(x => String(x.id) === moodboardVendor);
+  const palette = String(settings.moodboardPalette || '').split(/[,\s]+/).filter(x => /^#[0-9a-f]{6}$/i.test(x)).slice(0, 8);
+  const vendorOptions = (db.Vendors || []).map(x => `<option value="${esc(x.id)}" ${String(x.id) === moodboardVendor ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
+  const cards = shown.map(x => {
+    const imageUrl = /^https:\/\//i.test(String(x.imageUrl || '')) ? safeLink(x.imageUrl) : '';
+    const sourceUrl = /^https:\/\//i.test(String(x.sourceUrl || '')) ? safeLink(x.sourceUrl) : '';
+    const swatch = /^#[0-9a-f]{6}$/i.test(String(x.color || '')) ? x.color : '#D7BFA7';
+    const assigned = (db.Vendors || []).find(v => String(v.id) === String(x.vendorId));
+    return `<article class="mood-card bg-surface-container-lowest rounded-2xl overflow-hidden border border-outline-variant/30 shadow-sm flex flex-col">
+      <div class="h-48 bg-surface-container relative overflow-hidden" style="background-color:${swatch}">
+        ${imageUrl ? `<img src="${imageUrl}" alt="Referensi ${esc(x.title)}" loading="lazy" referrerpolicy="no-referrer" class="w-full h-full object-cover" onerror="this.style.display='none'">` : '<div class="w-full h-full flex items-center justify-center text-white/80"><span class="material-symbols-outlined text-6xl">palette</span></div>'}
+        <span class="absolute top-3 left-3 bg-white/95 text-on-surface text-xs font-bold rounded-full px-3 py-1 shadow-sm">${esc(x.section || 'Lainnya')}</span>
+      </div>
+      <div class="p-5 flex flex-col gap-3 flex-1">
+        <div class="flex items-start justify-between gap-2"><h3 class="font-headline-sm text-base font-bold text-on-surface">${esc(x.title)}</h3><span class="w-6 h-6 rounded-full border border-outline-variant shrink-0" style="background-color:${swatch}" title="${esc(swatch)}"></span></div>
+        <p class="text-sm text-on-surface-variant whitespace-pre-wrap flex-1">${esc(x.notes || 'Belum ada arahan tambahan.')}</p>
+        <p class="text-xs font-semibold text-secondary">${assigned ? 'Untuk: ' + esc(assigned.name) : 'Untuk semua vendor'}</p>
+        <div class="flex items-center justify-between gap-3 border-t border-surface-container pt-3">
+          ${sourceUrl ? `<a href="${sourceUrl}" target="_blank" rel="noopener noreferrer" class="text-sm text-primary underline">Lihat sumber</a>` : '<span></span>'}
+          <div class="mood-edit-controls flex gap-2"><button data-action="edit" data-sheet="Moodboard" data-id="${esc(x.id)}" class="text-xs font-bold text-primary">Ubah</button><button data-action="delete" data-sheet="Moodboard" data-id="${esc(x.id)}" class="text-xs font-bold text-error">Hapus</button></div>
+        </div>
+      </div>
+    </article>`;
+  }).join('');
+
+  return `<div class="w-full max-w-7xl mx-auto pb-space-xl" id="wf-moodboard-page">
+    <style>@media print{#wf-moodboard-page,#wf-moodboard-page *{print-color-adjust:exact!important;-webkit-print-color-adjust:exact!important}aside,header,#wedding-fund-connection,.mood-edit-controls,.mood-screen-only{display:none!important}body .pl-64{padding-left:0!important}main{padding:0!important;background:white!important}#wf-moodboard-page{max-width:none!important;padding:0!important}.mood-card{break-inside:avoid;box-shadow:none!important}#wf-moodboard-page .mood-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}</style>
+    <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-7">
+      <div><p class="text-xs font-bold tracking-widest uppercase text-primary mb-1">Konsep Pernikahan</p><h1 class="font-headline-lg text-headline-lg font-bold">Moodboard</h1><p class="text-on-surface-variant mt-2 max-w-2xl">Satukan gambaran suasana, warna, dan referensi visual agar setiap vendor memahami arahan yang sama.</p></div>
+      <div class="mood-screen-only flex flex-wrap gap-2"><button data-action="print-moodboard" class="px-4 py-2.5 rounded-xl border border-outline-variant bg-white font-semibold text-sm flex items-center gap-2"><span class="material-symbols-outlined text-lg">print</span>Cetak / Simpan PDF</button><button data-action="add-Moodboard" class="px-4 py-2.5 rounded-xl bg-primary text-on-primary font-semibold text-sm flex items-center gap-2"><span class="material-symbols-outlined text-lg">add</span>Tambah Referensi</button></div>
+    </div>
+    <section class="rounded-3xl bg-primary-fixed/50 border border-primary/10 p-6 md:p-8 mb-6">
+      <p class="text-xs uppercase tracking-widest text-primary font-bold">Creative brief ${vendor ? 'untuk ' + esc(vendor.name) : 'untuk seluruh vendor'}</p>
+      <h2 class="text-2xl font-bold mt-2">${esc(settings.moodboardTheme || 'Konsep wedding belum diberi judul')}</h2>
+      <p class="text-on-surface-variant mt-3 whitespace-pre-wrap">${esc(settings.moodboardBrief || 'Tuliskan suasana, detail yang wajib ada, dan hal yang perlu dihindari agar vendor memiliki arahan yang jelas.')}</p>
+      ${palette.length ? `<div class="flex flex-wrap gap-3 mt-5">${palette.map(c => `<div class="flex items-center gap-2 bg-white/80 rounded-full pr-3 text-xs font-bold"><span class="w-9 h-9 rounded-full border border-white" style="background-color:${c}"></span>${esc(c)}</div>`).join('')}</div>` : ''}
+    </section>
+    <div class="mood-screen-only grid lg:grid-cols-[minmax(0,1fr)_280px] gap-4 mb-7">
+      <form id="wf-moodboard-brief" class="bg-surface-container-lowest rounded-2xl p-5 border border-outline-variant/30 flex flex-col gap-3">
+        <h3 class="font-bold">Arahan utama untuk vendor</h3>
+        <label class="text-xs font-semibold">Nama tema / suasana<input name="moodboardTheme" maxlength="120" class="w-full mt-1 rounded-xl border border-outline-variant p-2.5 text-sm" placeholder="Contoh: Garden wedding yang hangat" value="${esc(settings.moodboardTheme || '')}"></label>
+        <label class="text-xs font-semibold">Gambaran dan hal yang perlu dihindari<textarea name="moodboardBrief" maxlength="3000" rows="3" class="w-full mt-1 rounded-xl border border-outline-variant p-2.5 text-sm" placeholder="Suasana, material, bunga, pencahayaan, dan detail yang tidak diinginkan">${esc(settings.moodboardBrief || '')}</textarea></label>
+        <label class="text-xs font-semibold">Palet warna (kode HEX, pisahkan koma)<input name="moodboardPalette" class="w-full mt-1 rounded-xl border border-outline-variant p-2.5 text-sm" placeholder="#F6F0E8, #D7BFA7, #8E6E61" value="${esc(settings.moodboardPalette || '')}"></label>
+        <div class="flex items-center gap-3"><button type="submit" class="px-4 py-2 rounded-xl bg-secondary text-on-secondary text-sm font-bold">Simpan konsep</button><span id="wf-moodboard-message" role="status" class="text-xs text-on-surface-variant"></span></div>
+      </form>
+      <div class="bg-surface-container-low rounded-2xl p-5 flex flex-col gap-3"><h3 class="font-bold">Brief khusus vendor</h3><p class="text-sm text-on-surface-variant">Pilih vendor untuk menampilkan referensi umum dan referensi yang ditujukan kepadanya. Cetak atau simpan sebagai PDF untuk dibagikan.</p><select id="wf-moodboard-vendor" class="rounded-xl border border-outline-variant p-2.5 text-sm bg-white"><option value="all">Semua vendor & referensi</option>${vendorOptions}</select><p class="text-xs text-on-surface-variant">Gunakan URL gambar yang bisa dibuka vendor. Foto privat memerlukan izin akses tersendiri.</p></div>
+    </div>
+    <div class="flex items-center justify-between mb-4"><h2 class="font-headline-sm text-lg font-bold">Referensi visual</h2><span class="text-sm text-on-surface-variant">${shown.length} referensi</span></div>
+    ${cards ? `<div class="mood-grid grid sm:grid-cols-2 xl:grid-cols-3 gap-5">${cards}</div>` : `<div class="rounded-2xl border border-dashed border-outline-variant bg-white p-10 text-center"><span class="material-symbols-outlined text-4xl text-primary">image</span><h3 class="font-bold mt-2">Belum ada referensi untuk pilihan ini</h3><p class="text-sm text-on-surface-variant mt-1">Tambahkan gambar, warna, dan arahan agar vendor dapat memahami konsep wedding Anda.</p><button data-action="add-Moodboard" class="mood-screen-only mt-4 px-4 py-2 rounded-xl bg-primary text-on-primary font-semibold">Tambah Referensi</button></div>`}
+  </div>`;
+}
+
+/* ==========================================================================
    7. REPORTS & ANALYTICS PAGE
    ========================================================================== */
 function reports() {
@@ -2446,6 +2535,7 @@ function render() {
     Checklist: checklist,
     Vendors: vendors,
     Savings: savings,
+    Moodboard: moodboard,
     Reports: reports,
     Settings: settings
   }[page] || home;
@@ -2473,7 +2563,8 @@ function openForm(sheet, r) {
     Transactions: 'Transaksi Baru',
     Savings: 'Setoran Tabungan',
     Vendors: 'Vendor Rekanan',
-    Checklist: 'Tugas Checklist'
+    Checklist: 'Tugas Checklist',
+    Moodboard: 'Referensi Moodboard'
   };
   const fields = modelFields[sheet](r).join('');
   modal.className = 'fixed inset-0 z-50 bg-on-surface/40 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto';
@@ -2624,6 +2715,7 @@ async function act(action, el) {
   if (action === 'add-Checklist') openForm('Checklist', { status: 'Belum mulai', owner });
   if (action === 'add-Vendors') openForm('Vendors');
   if (action === 'add-Savings') openForm('Savings', { date: today(), owner });
+  if (action === 'add-Moodboard') openForm('Moodboard');
 
   if (action === 'set-budget') {
     const id = el.dataset.category;
@@ -2681,6 +2773,7 @@ async function act(action, el) {
   }
 
   if (action === 'print') window.print();
+  if (action === 'print-moodboard') window.print();
 
   if (action === 'reset-filter') {
     filter = { q: '', owner: 'Semua', from: '', to: '' };
@@ -2794,6 +2887,36 @@ async function del(sheet, id) {
 }
 
 function bind() {
+  const moodVendorSelect = document.getElementById('wf-moodboard-vendor');
+  if (moodVendorSelect) moodVendorSelect.onchange = () => { moodboardVendor = moodVendorSelect.value; render(); };
+
+  const moodBriefForm = document.getElementById('wf-moodboard-brief');
+  if (moodBriefForm) moodBriefForm.onsubmit = async e => {
+    e.preventDefault();
+    const values = Object.fromEntries(new FormData(moodBriefForm));
+    const colors = String(values.moodboardPalette || '').split(/[,\s]+/).filter(Boolean);
+    const message = document.getElementById('wf-moodboard-message');
+    if (colors.length > 8 || colors.some(c => !/^#[0-9a-f]{6}$/i.test(c))) {
+      message.textContent = 'Gunakan maksimal 8 warna dengan format #RRGGBB.';
+      message.className = 'text-xs text-error';
+      return;
+    }
+    values.moodboardPalette = colors.join(', ');
+    const button = moodBriefForm.querySelector('button[type=submit]');
+    button.disabled = true;
+    message.textContent = 'Menyimpan…';
+    try {
+      await api('saveSettings', values);
+      await refresh();
+      const success = document.getElementById('wf-moodboard-message');
+      if (success) { success.textContent = 'Konsep tersimpan untuk semua vendor.'; success.className = 'text-xs text-secondary'; }
+    } catch (err) {
+      button.disabled = false;
+      message.textContent = err.message || String(err);
+      message.className = 'text-xs text-error';
+    }
+  };
+
   const q = document.getElementById('wf-q');
   if (q) {
     q.oninput = () => {

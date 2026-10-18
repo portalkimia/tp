@@ -6,7 +6,7 @@ Website Wedding Fund di-host publik melalui GitHub Pages. Semua pengunjung melih
 
 ## File penting
 
-- `index.html`: build statis siap GitHub Pages; navigasi Dashboard, RAB, transaksi, checklist, vendor, tabungan, laporan, dan pengaturan berada dalam satu SPA.
+- `index.html`: build statis siap GitHub Pages; navigasi Dashboard, RAB, transaksi, checklist, vendor, tabungan, moodboard, laporan, dan pengaturan berada dalam satu SPA.
 - `tools/index-shell.html` + `Client.html`: source tampilan dan runtime untuk build.
 - `config.js`: URL endpoint GAS (informasi publik, bukan credential).
 - `Code.gs`: API dan akses Sheet, login, sesi, validasi, CRUD.
@@ -40,9 +40,14 @@ GitHub Pages menayangkan layar login kepada umum. Username/password dan data She
 - `Vendors`: nilai kontrak; jumlah dibayar dan sisa dihitung dari transaksi tertaut.
 - `Savings`: setoran tabungan.
 - `Checklist`: tugas, PIC, status, tenggat, estimasi, kategori, vendor.
-- `Settings`: profil pasangan, tanggal acara, target, preferensi pengingat.
+- `Moodboard`: kartu referensi konsep, gambar, warna, arahan, sumber, urutan, dan vendor tujuan. Tab ini dibuat otomatis saat aplikasi pertama kali dibuka setelah pembaruan.
+- `Settings`: profil pasangan, tanggal acara, target, preferensi pengingat, judul konsep, brief, dan palet moodboard.
 
 Input web dan input langsung Sheet memakai sumber yang sama. Trigger memberi ID dan menghubungkan kategori/vendor lewat nama.
+
+## Moodboard untuk vendor
+
+Isi judul tema, gambaran suasana, hal yang harus dihindari, dan kode warna HEX pada halaman **Moodboard**. Tambahkan kartu referensi dengan URL gambar langsung berawalan `https://`, sumber asli, dan catatan yang konkret. Kartu bisa ditujukan ke satu vendor atau ke semua vendor. Pilih vendor pada filter lalu klik **Cetak / Simpan PDF** untuk membuat brief yang hanya berisi arahan umum dan referensi vendor tersebut. Kirim PDF itu secara manual kepada vendor; aplikasi tidak mengirim pesan atau membuka akses spreadsheet untuk vendor. Gambar yang memakai tautan privat hanya akan terlihat oleh orang yang memiliki izin di sumber gambar.
 
 ## Aturan perhitungan
 

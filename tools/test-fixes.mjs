@@ -20,12 +20,14 @@ const tables = {
 const sheet = name => ({
   getLastColumn: () => tables[name][0].length,
   getDataRange: () => ({ getValues: () => tables[name].map(row => row.slice()) }),
+  setFrozenRows() {},
   getRange: (r, c, height = 1, width = 1) => ({
     getDisplayValues: () => tables[name].slice(r - 1, r - 1 + height).map(row => row.slice(c - 1, c - 1 + width).map(String)),
     setValues: values => values.forEach((value, i) => {
       tables[name][r - 1 + i] ??= [];
       value.forEach((cell, j) => { tables[name][r - 1 + i][c - 1 + j] = cell; });
-    })
+    }),
+    setFontWeight() { return this; }, setBackground() { return this; }, setFontColor() { return this; }
   }),
   appendRow: row => tables[name].push(row)
 });
@@ -34,7 +36,10 @@ const backend = {
   PropertiesService: { getScriptProperties: () => ({ getProperty: key => props.get(key) || null, setProperty: (key, value) => props.set(key, value) }) },
   CacheService: { getScriptCache: () => ({ get: key => cache.get(key) || null, put: (key, value) => cache.set(key, value), remove: key => cache.delete(key) }) },
   Session: { getActiveUser: () => ({ getEmail: () => '' }), getScriptTimeZone: () => 'Asia/Jakarta' },
-  SpreadsheetApp: { getActiveSpreadsheet: () => ({ getSheetByName: sheet }) },
+  SpreadsheetApp: { getActiveSpreadsheet: () => ({
+    getSheetByName: name => tables[name] ? sheet(name) : null,
+    insertSheet: name => { tables[name] = []; return sheet(name); }
+  }) },
   LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) }
 };
 vm.createContext(backend);
@@ -55,6 +60,11 @@ backend.saveRecord('Budget', { categoryId: 'c1', plannedAmount: 10000000, owner:
 assert.throws(() => backend.saveRecord('Budget', { categoryId: 'c1', plannedAmount: 20000000, owner: 'Cewe' }), /sudah memiliki anggaran/);
 assert.throws(() => backend.saveRecord('Vendors', { id: 'v1', name: 'Vendor', categoryId: 'c1', contractAmount: 5000000 }), /kurang dari pembayaran/);
 assert.equal(tables.Vendors[1][3], 10000000);
+assert.equal(tables.Moodboard, undefined, 'new moodboard tab should be created on first use');
+assert.throws(() => backend.saveRecord('Moodboard', { title: 'Panggung', section: 'Dekorasi', imageUrl: 'javascript:alert(1)' }), /HTTPS/);
+backend.saveRecord('Moodboard', { title: 'Panggung', section: 'Dekorasi', imageUrl: 'https://example.com/dekorasi.jpg', color: '#D7BFA7', vendorId: 'v1', notes: 'Bunga putih' });
+assert.equal(tables.Moodboard[0][0], 'id');
+assert.equal(backend.readRecords_('Moodboard')[0].notes, 'Bunga putih');
 
 const element = () => ({ innerHTML: '', textContent: '', style: {}, classList: { add() {}, remove() {} }, appendChild() {}, querySelectorAll: () => [], querySelector: () => ({ disabled: false }), setAttribute() {} });
 const nodes = Object.fromEntries(['wf-root', 'wf-login', 'wf-demo-btn', 'wf-login-error'].map(key => [key, element()]));
@@ -77,7 +87,8 @@ const startup = clientSource.lastIndexOf('\nbindOwner();');
 vm.createContext(client);
 vm.runInContext(clientSource.slice(0, startup) + `
 window.audit = {
-  setDb: value => db = value, getDb: () => db, act, demoApi_, home, reports, budget,
+  setDb: value => db = value, getDb: () => db, act, demoApi_, home, reports, budget, moodboard,
+  setMoodboardVendor: value => moodboardVendor = value,
   setReport: value => report = value, setDownload: fn => download = fn,
   markLoggedIn: () => sessionToken = 'old-token', DEMO_DB
 };
@@ -112,5 +123,17 @@ assert.doesNotMatch(app.home(), /H-2 Hari/);
 await app.act('toggle-task', { dataset: { id: 'next', status: 'Belum mulai' } });
 assert.equal(demo.Checklist[0].status, 'Belum mulai', 'failed save must revert optimistic UI');
 assert.ok(errors.length > 0);
+
+demo.Moodboard = [
+  { id: 'a', title: '<script>alert(1)</script>', section: 'Dekorasi', notes: 'Umum', imageUrl: 'javascript:alert(1)', vendorId: '' },
+  { id: 'b', title: 'Khusus vendor', section: 'Venue', notes: 'Lampu hangat', vendorId: 'ven-1' },
+  { id: 'c', title: 'Vendor lain', section: 'Catering', notes: 'Bukan untuk venue', vendorId: 'ven-2' }
+];
+app.setMoodboardVendor('ven-1');
+const brief = app.moodboard();
+assert.match(brief, /Khusus vendor/);
+assert.doesNotMatch(brief, /Vendor lain/);
+assert.match(brief, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+assert.doesNotMatch(brief, /src="javascript:/);
 
 console.log('Semua pengujian perbaikan berhasil.');
