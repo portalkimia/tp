@@ -730,6 +730,14 @@ function updateHeaderAndAside_() {
     link.innerHTML = '<span class="material-symbols-outlined text-[20px]">palette</span><span class="font-label-lg text-label-lg">Moodboard</span>';
     nav.insertBefore(link, nav.querySelector('[data-path="laporan"]'));
   }
+  if (nav && !nav.querySelector('[data-action="open-invitation"]')) {
+    const link = document.createElement('a');
+    link.href = 'https://portalkimia.github.io/invitation/dashboard';
+    link.dataset.action = 'open-invitation';
+    link.className = 'flex items-center gap-space-sm px-space-md py-space-sm rounded-xl text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface transition-colors';
+    link.innerHTML = '<span class="material-symbols-outlined text-[20px]">mail</span><span class="font-label-lg text-label-lg">Undangan Digital</span>';
+    nav.insertBefore(link, nav.querySelector('[data-path="laporan"]'));
+  }
   const s = db.Settings || {};
   const partner1 = s.partnerOneName || 'Dika';
   const partner2 = s.partnerTwoName || 'Nisa';
@@ -2699,8 +2707,34 @@ function download(name, rows) {
 }
 
 async function act(action, el) {
+  if (action === 'open-invitation') {
+    const destination = 'https://portalkimia.github.io/invitation/dashboard';
+    if (isDemo || inGas) {
+      window.location.assign(destination);
+      return;
+    }
+    if (!sessionToken) {
+      alert('Silakan masuk ke Wedding Fund terlebih dahulu.');
+      return;
+    }
+    el.setAttribute('aria-busy', 'true');
+    try {
+      const handoff = await postApi_('createInvitationHandoff', {});
+      if (!handoff || !/^[a-f0-9]{64}$/i.test(handoff.ticket || '')) throw new Error('Tiket masuk tidak valid.');
+      window.location.assign(destination + '#wf-handoff=' + encodeURIComponent(handoff.ticket));
+    } catch (err) {
+      alert('Tidak dapat membuka dashboard undangan: ' + (err.message || String(err)));
+    } finally {
+      el.removeAttribute('aria-busy');
+    }
+    return;
+  }
   if (action === 'logout') {
     if (!isDemo && sessionToken && !inGas) postApi_('logout', {}).catch(() => {});
+    if (!isDemo) {
+      localStorage.removeItem('wedding_session_v2_admin');
+      localStorage.removeItem('wedding_admin_pin');
+    }
     sessionToken = '';
     isDemo = false;
     db = null;

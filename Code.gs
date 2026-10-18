@@ -71,6 +71,8 @@ function doPost(e) {
 
     if (p.action === 'login') {
       result = loginUser_(p.username, p.password);
+    } else if (p.action === 'redeemInvitationHandoff') {
+      result = redeemInvitationHandoff_(p.ticket);
     } else {
       API_REQUEST_USER_ = requireSession_(p.sessionToken);
       if (p.action === 'logout') {
@@ -82,6 +84,8 @@ function doPost(e) {
         result = deleteRecord(String(payload.sheet || ''), String(payload.id || ''));
       } else if (p.action === 'saveSettings') {
         result = saveSettings(payload.values || {});
+      } else if (p.action === 'createInvitationHandoff') {
+        result = createInvitationHandoff_(API_REQUEST_USER_);
       } else {
         throw new Error('Aksi API tidak dikenal: ' + p.action);
       }
@@ -199,6 +203,27 @@ function requireSession_(token) {
     throw new Error('Sesi telah berakhir. Silakan login kembali.');
   }
   return username;
+}
+
+function createInvitationHandoff_(username) {
+  const ticket = Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, '');
+  CacheService.getScriptCache().put('wf:invitation:' + ticket, String(username), 90);
+  return { ticket: ticket, expiresIn: 90 };
+}
+
+function redeemInvitationHandoff_(ticket) {
+  if (!/^[a-f0-9]{64}$/i.test(String(ticket || ''))) throw new Error('Tiket undangan tidak valid.');
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    const key = 'wf:invitation:' + ticket;
+    const username = CacheService.getScriptCache().get(key);
+    if (!username) throw new Error('Tiket undangan telah digunakan atau kedaluwarsa.');
+    CacheService.getScriptCache().remove(key);
+    return { username: username };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function constantTimeEqual_(a, b) {

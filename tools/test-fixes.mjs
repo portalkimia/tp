@@ -53,6 +53,12 @@ assert.throws(() => backend.loginUser_('one', 'nikah2025'), /bawaan lama/);
 props.set('APP_LOGIN_PASS_1', 'another-private-password');
 const token = backend.loginUser_('one', 'another-private-password').sessionToken;
 assert.equal(backend.requireSession_(token), 'one');
+assert.equal(backend.doPost({ parameter: { action: 'createInvitationHandoff' } }).ok, false, 'handoff requires login');
+const handoff = backend.doPost({ parameter: { action: 'createInvitationHandoff', sessionToken: token } }).result;
+assert.match(handoff.ticket, /^[a-f0-9]{64}$/);
+assert.equal(backend.doPost({ parameter: { action: 'redeemInvitationHandoff', ticket: handoff.ticket } }).result.username, 'one');
+assert.throws(() => backend.redeemInvitationHandoff_(handoff.ticket), /digunakan/);
+assert.throws(() => backend.redeemInvitationHandoff_('invalid'), /tidak valid/);
 assert.equal(backend.doPost({ parameter: { action: 'logout', sessionToken: token } }).ok, true);
 assert.throws(() => backend.requireSession_(token), /berakhir/);
 
@@ -97,8 +103,10 @@ const app = client.audit;
 
 app.setDb({ Categories: [], Budget: [], Transactions: [{ id: 'private', description: 'PRIVATE PAYMENT', type: 'Pengeluaran', amount: 10 }], Vendors: [], Savings: [], Checklist: [], Settings: { partnerOneName: 'PRIVATE NAME' } });
 app.markLoggedIn();
+storage.setItem('wedding_session_v2_admin', 'invitation-session');
 await app.act('logout');
 assert.equal(app.getDb(), null);
+assert.equal(storage.getItem('wedding_session_v2_admin'), null, 'Wedding Fund logout clears invitation admin session in this browser');
 assert.equal((await app.demoApi_('getAppSnapshot')).Settings.partnerOneName, app.DEMO_DB.Settings.partnerOneName);
 
 const demo = JSON.parse(JSON.stringify(app.DEMO_DB));
