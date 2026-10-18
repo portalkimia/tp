@@ -32,7 +32,7 @@ const uploadFiles = [
 await mkdir(upload, { recursive: true });
 for (const file of uploadFiles) await copyFile(resolve(root, file), resolve(upload, file));
 for (const dir of ['tools','docs']) await mkdir(resolve(upload, dir), { recursive: true });
-for (const file of ['build-github-pages.mjs','build-database.mjs','index-shell.html','serve.mjs'])
+for (const file of ['build-github-pages.mjs','build-database.mjs','index-shell.html','serve.mjs','test-fixes.mjs'])
   await copyFile(resolve(root, 'tools', file), resolve(upload, 'tools', file));
 await copyFile(resolve(root, 'docs', 'design.md'), resolve(upload, 'docs', 'design.md'));
 console.log('Build selesai. Root index.html, github-pages/, dan github-upload/ sudah disinkronkan. Unggah ISI github-upload/ ke root repo.');

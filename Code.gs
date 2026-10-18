@@ -72,7 +72,10 @@ function doPost(e) {
       result = loginUser_(p.username, p.password);
     } else {
       API_REQUEST_USER_ = requireSession_(p.sessionToken);
-      if (p.action === 'save') {
+      if (p.action === 'logout') {
+        CacheService.getScriptCache().remove('wf:session:' + p.sessionToken);
+        result = true;
+      } else if (p.action === 'save') {
         result = saveRecord(String(payload.sheet || ''), payload.record || {});
       } else if (p.action === 'delete') {
         result = deleteRecord(String(payload.sheet || ''), String(payload.id || ''));
@@ -156,14 +159,11 @@ function loginUser_(username, password) {
   let u2 = props.getProperty('APP_LOGIN_USER_2');
   let p2 = props.getProperty('APP_LOGIN_PASS_2');
 
-  // Inisialisasi kredensial default jika belum diatur
-  if (!u1 && !p1) {
-    u1 = 'dika'; p1 = 'nikah2025';
-    u2 = 'nisa'; p2 = 'nikah2025';
-    props.setProperty('APP_LOGIN_USER_1', u1);
-    props.setProperty('APP_LOGIN_PASS_1', p1);
-    props.setProperty('APP_LOGIN_USER_2', u2);
-    props.setProperty('APP_LOGIN_PASS_2', p2);
+  if (!u1 || !p1 || !u2 || !p2) {
+    throw new Error('Akun belum dikonfigurasi. Lengkapi dua pasangan username/password di Script Properties.');
+  }
+  if (p1 === 'nikah2025' || p2 === 'nikah2025') {
+    throw new Error('Password bawaan lama harus diganti di Script Properties sebelum login.');
   }
 
   let matched = false;
@@ -214,13 +214,19 @@ function constantTimeEqual_(a, b) {
  * Fungsi pembantu untuk mengatur kredensial login via Apps Script Editor
  */
 function setLoginCredentials(user1, pass1, user2, pass2) {
+  if (!user1 || !pass1 || !user2 || !pass2) {
+    throw new Error('Dua pasangan username dan password wajib diisi.');
+  }
+  if (pass1 === 'nikah2025' || pass2 === 'nikah2025') {
+    throw new Error('Gunakan password baru yang berbeda dari password bawaan lama.');
+  }
   const props = PropertiesService.getScriptProperties();
-  props.setProperty('APP_LOGIN_USER_1', user1 || 'dika');
-  props.setProperty('APP_LOGIN_PASS_1', pass1 || 'nikah2025');
-  props.setProperty('APP_LOGIN_USER_2', user2 || 'nisa');
-  props.setProperty('APP_LOGIN_PASS_2', pass2 || 'nikah2025');
+  props.setProperty('APP_LOGIN_USER_1', user1);
+  props.setProperty('APP_LOGIN_PASS_1', pass1);
+  props.setProperty('APP_LOGIN_USER_2', user2);
+  props.setProperty('APP_LOGIN_PASS_2', pass2);
   Logger.log('Kredensial login berhasil disimpan!');
-  return { ok: true, user1: user1 || 'dika', user2: user2 || 'nisa' };
+  return { ok: true, user1: user1, user2: user2 };
 }
 
 /* ==========================================================================
@@ -261,21 +267,11 @@ function setupDatabase() {
   migrateLegacyCategoryLinks_();
   installSheetEditTrigger_(ss);
 
-  // Pastikan kredensial awal tersimpan di Script Properties
-  const props = PropertiesService.getScriptProperties();
-  if (!props.getProperty('APP_LOGIN_USER_1')) {
-    props.setProperty('APP_LOGIN_USER_1', 'dika');
-    props.setProperty('APP_LOGIN_PASS_1', 'nikah2025');
-    props.setProperty('APP_LOGIN_USER_2', 'nisa');
-    props.setProperty('APP_LOGIN_PASS_2', 'nikah2025');
-  }
-
   Logger.log('Database Wedding Fund berhasil disiapkan di: ' + ss.getUrl());
   return {
     spreadsheet: ss.getUrl(),
     tabs: Object.keys(SHEETS),
-    defaultUsers: ['dika', 'nisa'],
-    instructions: 'Database siap digunakan. Deploy Web App melalui Deploy > New deployment > Web app (Execute as me, Who has access: Anyone).'
+    instructions: 'Atur dua pasangan APP_LOGIN_USER/PASS di Script Properties sebelum deploy Web App.'
   };
 }
 
@@ -350,6 +346,14 @@ function saveRecord(sheetName, record) {
 
     const merged = Object.assign({}, existingRecord, record);
 
+    if (sheetName === 'Budget' && merged.categoryId) {
+      const duplicate = rows.slice(1).some(function(row) {
+        return String(row[headers.indexOf('categoryId')]) === String(merged.categoryId) &&
+          String(row[headers.indexOf('id')]) !== id;
+      });
+      if (duplicate) throw new Error('Kategori ini sudah memiliki anggaran. Ubah anggaran yang ada.');
+    }
+
     if (merged.categoryId) {
       const category = readRecords_('Categories').filter(function(x) { return String(x.id) === String(merged.categoryId); })[0];
       merged.categoryName = category ? category.name : '';
@@ -365,6 +369,7 @@ function saveRecord(sheetName, record) {
     }
 
     if (sheetName === 'Transactions') validateVendorPayment_(merged, record.id);
+    if (sheetName === 'Vendors') validateVendorContract_(merged, id);
 
     const row = headers.map(function(key) {
       if (key === 'id') return id;
@@ -610,6 +615,15 @@ function validateVendorPayment_(record, id) {
     if (paid + (Number(record.amount) || 0) > contract) {
       throw new Error('Pembayaran melebihi total nilai kontrak vendor (' + contract + ').');
     }
+  }
+}
+
+function validateVendorContract_(vendor, id) {
+  const paid = readRecords_('Transactions').filter(function(x) {
+    return String(x.vendorId) === String(id) && normalizedType_(x.type) === 'expense';
+  }).reduce(function(sum, x) { return sum + (Number(x.amount) || 0); }, 0);
+  if (Number(vendor.contractAmount || 0) < paid) {
+    throw new Error('Nilai kontrak vendor tidak boleh kurang dari pembayaran tercatat (' + paid + ').');
   }
 }
 

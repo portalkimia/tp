@@ -331,6 +331,7 @@ function renderLoginBox_() {
   if (demoBtn) {
     demoBtn.onclick = () => {
       isDemo = true;
+      db = JSON.parse(JSON.stringify(DEMO_DB));
       sessionStorage.setItem('wf-demo-mode', 'true');
       sessionToken = 'demo-session';
       document.body.classList.add('wf-authenticated');
@@ -356,6 +357,7 @@ function renderLoginBox_() {
       // Demo login shortcut or fallback if GAS backend is not connected yet
       if (u === 'demo' || (!cfg.apiUrl || cfg.apiUrl.includes('PASTE_WEB_APP_URL'))) {
         isDemo = true;
+        db = JSON.parse(JSON.stringify(DEMO_DB));
         sessionStorage.setItem('wf-demo-mode', 'true');
         sessionToken = 'demo-session';
         document.body.classList.add('wf-authenticated');
@@ -602,6 +604,15 @@ const vendorPaid = () => {
   return m;
 };
 
+const plannedForCategory = id => (db?.Budget || [])
+  .filter(x => String(x.categoryId) === String(id))
+  .reduce((sum, x) => sum + Number(x.plannedAmount || 0), 0);
+
+const reminderSettings = () => ({
+  enabled: db?.Settings?.remindersEnabled !== false && String(db?.Settings?.remindersEnabled).toLowerCase() !== 'false',
+  days: Math.max(1, Number(db?.Settings?.reminderDays) || 7)
+});
+
 const ownerOptions = owners.map(x => ({ value: x, label: x }));
 const priorityOptions = priorities.map(x => ({ value: x, label: x }));
 
@@ -787,9 +798,12 @@ function home() {
   const settings = db.Settings || {};
   const planned = summary.planned || Number(settings.budgetTarget || 0);
   const expenses = summary.expenses || 0;
+  const income = summary.income || 0;
   const savings = summary.savings || 0;
-  const remainingNeeded = Math.max(0, planned - savings);
-  const savingsPercent = planned > 0 ? Math.min(100, Math.round((savings / planned) * 1000) / 10) : 0;
+  const funding = savings + income;
+  const remainingNeeded = Math.max(0, planned - funding);
+  const fundingPercent = planned > 0 ? Math.min(100, Math.round((funding / planned) * 1000) / 10) : 0;
+  const reminders = reminderSettings();
   const expensePercent = planned > 0 ? Math.min(100, Math.round((expenses / planned) * 1000) / 10) : 0;
 
   let monthsLeft = 5;
@@ -812,8 +826,7 @@ function home() {
   const topCats = (db.Categories || [])
     .filter(c => c.active !== false && String(c.active) !== 'FALSE')
     .map(c => {
-      const b = (db.Budget || []).find(x => String(x.categoryId) === String(c.id));
-      const p = Number(b?.plannedAmount || 0);
+      const p = plannedForCategory(c.id);
       const a = actualCat[c.id] || 0;
       const pct = p > 0 ? Math.round((a / p) * 100) : 0;
       return { id: c.id, name: c.name, planned: p, actual: a, pct, icon: getCategoryIcon(c.name) };
@@ -865,9 +878,10 @@ function home() {
       const diff = Math.floor((dueMs - todayMs) / 86400000);
       let dueBadge = '';
       if (!t.dueDate) dueBadge = '<span class="px-2 py-0.5 rounded-full bg-surface-container text-on-surface-variant font-label-sm">Tanpa tenggat</span>';
+      else if (!reminders.enabled) dueBadge = `<span class="px-2 py-0.5 rounded-full bg-surface-container text-on-surface-variant font-label-sm">${dateFmt(t.dueDate)}</span>`;
       else if (diff < 0) dueBadge = `<span class="px-2 py-0.5 rounded-full bg-error-container text-on-error-container font-label-sm font-semibold">Terlambat ${Math.abs(diff)} hari</span>`;
       else if (diff === 0) dueBadge = '<span class="px-2 py-0.5 rounded-full bg-error-container text-on-error-container font-label-sm font-semibold">Hari Ini</span>';
-      else if (diff <= 7) dueBadge = `<span class="px-2 py-0.5 rounded-full bg-error-container text-on-error-container font-label-sm font-semibold">H-${diff} Hari</span>`;
+      else if (diff <= reminders.days) dueBadge = `<span class="px-2 py-0.5 rounded-full bg-error-container text-on-error-container font-label-sm font-semibold">H-${diff} Hari</span>`;
       else dueBadge = `<span class="px-2 py-0.5 rounded-full bg-secondary-container text-on-secondary-container font-label-sm font-semibold">${dateFmt(t.dueDate)}</span>`;
 
       return `
@@ -966,9 +980,9 @@ function home() {
             <div>
               <div class="flex items-center gap-space-xs">
                 <span class="font-label-sm text-label-sm uppercase tracking-wider text-on-surface-variant font-bold">Dana Terkumpul</span>
-                <span class="px-2 py-0.5 rounded-full bg-tertiary-fixed text-on-tertiary-fixed font-label-sm text-label-sm font-semibold">${savingsPercent}%</span>
+                <span class="px-2 py-0.5 rounded-full bg-tertiary-fixed text-on-tertiary-fixed font-label-sm text-label-sm font-semibold">${fundingPercent}%</span>
               </div>
-              <div class="mt-space-xs font-headline-lg text-headline-lg text-primary font-semibold">${cash(savings)}</div>
+              <div class="mt-space-xs font-headline-lg text-headline-lg text-primary font-semibold">${cash(funding)}</div>
             </div>
             <div class="w-10 h-10 rounded-xl bg-primary-fixed flex items-center justify-center text-primary">
               <span class="material-symbols-outlined text-[22px]">savings</span>
@@ -976,10 +990,10 @@ function home() {
           </div>
           <div class="mt-space-md">
             <div class="w-full h-2.5 bg-surface-container-low rounded-full overflow-hidden flex">
-              <div class="h-full bg-gradient-to-r from-primary via-primary-container to-tertiary-container rounded-full" style="width: ${savingsPercent}%"></div>
+              <div class="h-full bg-gradient-to-r from-primary via-primary-container to-tertiary-container rounded-full" style="width: ${fundingPercent}%"></div>
             </div>
             <div class="mt-space-xs flex items-center justify-between font-label-sm text-label-sm text-on-surface-variant">
-              <span>Tabungan Gabungan</span>
+              <span>Setoran ${cash(savings)} + pemasukan ${cash(income)}</span>
               <span class="text-tertiary font-bold">${remainingNeeded > 0 ? 'Kurang ' + cash(remainingNeeded) : 'Target Terpenuhi! 🎉'}</span>
             </div>
           </div>
@@ -1216,8 +1230,7 @@ function budget() {
   const pctTotal = plannedTotal > 0 ? Math.round((actualTotal / plannedTotal) * 1000) / 10 : 0;
 
   const cardsHtml = categories.map(c => {
-    const b = (db.Budget || []).find(x => String(x.categoryId) === String(c.id));
-    const p = Number(b?.plannedAmount || 0);
+    const p = plannedForCategory(c.id);
     const a = actualMap[c.id] || 0;
     const rem = p - a;
     const pct = p > 0 ? Math.round((a / p) * 100) : 0;
@@ -1821,6 +1834,7 @@ function checklist() {
    5. VENDORS & PAYMENTS PAGE
    ========================================================================== */
 function vendors() {
+  const reminders = reminderSettings();
   const paidMap = vendorPaid();
   const allVendors = db.Vendors || [];
   const totalContract = allVendors.reduce((s, v) => s + Number(v.contractAmount || 0), 0);
@@ -1830,12 +1844,13 @@ function vendors() {
 
   // Urgent vendor bills (< 7 days or overdue)
   const urgentBills = allVendors.filter(v => {
+    if (!reminders.enabled) return false;
     const due = Number(v.contractAmount || 0) - (paidMap[v.id] || 0);
     if (due <= 0 || !v.nextDueDate) return false;
     const todayMs = Date.parse(today() + 'T00:00:00Z');
     const dueMs = Date.parse(date(v.nextDueDate) + 'T00:00:00Z');
     const diff = Math.floor((dueMs - todayMs) / 86400000);
-    return diff <= 7;
+    return diff <= reminders.days;
   });
 
   const cardsHtml = allVendors.map(v => {
@@ -1993,7 +2008,8 @@ function savings() {
   const totalSavings = allSavings.reduce((s, x) => s + Number(x.amount || 0), 0);
   const planned = db.summary?.planned || Number(db.Settings?.budgetTarget || 0);
   const pct = planned > 0 ? Math.min(100, Math.round((totalSavings / planned) * 1000) / 10) : 0;
-  const remainingDeficit = Math.max(0, planned - totalSavings);
+  const additionalIncome = Number(db.summary?.income || 0);
+  const remainingDeficit = Math.max(0, planned - totalSavings - additionalIncome);
 
   const savingsCowo = allSavings.filter(x => x.owner === 'Cowo').reduce((s, x) => s + Number(x.amount || 0), 0);
   const savingsCewe = allSavings.filter(x => x.owner === 'Cewe').reduce((s, x) => s + Number(x.amount || 0), 0);
@@ -2050,7 +2066,7 @@ function savings() {
             </p>
             <div class="flex items-center gap-space-lg py-2 mt-2 border-t border-surface-container">
               <div>
-                <span class="font-label-sm text-label-sm text-on-surface-variant block">Sisa Kekurangan Dana</span>
+                <span class="font-label-sm text-label-sm text-on-surface-variant block">Sisa Kebutuhan setelah Tabungan & Pemasukan</span>
                 <span class="font-headline-sm text-headline-sm text-primary font-bold">${cash(remainingDeficit)}</span>
               </div>
               <div class="w-px h-8 bg-surface-container"></div>
@@ -2175,8 +2191,7 @@ function reports() {
   const comparisonRows = (db.Categories || [])
     .filter(c => c.active !== false && String(c.active) !== 'FALSE')
     .map(c => {
-      const b = (db.Budget || []).find(x => String(x.categoryId) === String(c.id));
-      const p = Number(b?.plannedAmount || 0);
+      const p = plannedForCategory(c.id);
       const a = expenses.filter(x => String(x.categoryId) === String(c.id)).reduce((s, x) => s + Number(x.amount || 0), 0);
       const diff = p - a;
       const pct = p > 0 ? Math.round((a / p) * 100) : 0;
@@ -2594,10 +2609,15 @@ function download(name, rows) {
 
 async function act(action, el) {
   if (action === 'logout') {
+    if (!isDemo && sessionToken && !inGas) postApi_('logout', {}).catch(() => {});
     sessionToken = '';
     isDemo = false;
+    db = null;
+    owner = 'Bersama';
     sessionStorage.removeItem('wf-session-token');
     sessionStorage.removeItem('wf-demo-mode');
+    localStorage.removeItem('wf-owner');
+    close();
     document.body.classList.remove('wf-authenticated');
     renderLoginBox_();
     return;
@@ -2652,6 +2672,8 @@ async function act(action, el) {
         await api('saveRecord', 'Checklist', task);
         await refresh();
       } catch (err) {
+        task.status = curStatus;
+        render();
         alert(err.message || String(err));
       }
     }
@@ -2683,14 +2705,13 @@ async function act(action, el) {
 
   if (action === 'export-Budget') {
     download('wedding-fund-rab.csv', (db.Categories || []).map(c => {
-      const b = (db.Budget || []).find(x => String(x.categoryId) === String(c.id));
       const spent = catSpent()[c.id] || 0;
       return {
         Kategori: c.name,
         Prioritas: c.priority,
-        Plafon_Anggaran: Number(b?.plannedAmount || 0),
+        Plafon_Anggaran: plannedForCategory(c.id),
         Realisasi_Terpakai: spent,
-        Sisa: Number(b?.plannedAmount || 0) - spent
+        Sisa: plannedForCategory(c.id) - spent
       };
     }));
   }
@@ -2742,7 +2763,12 @@ async function act(action, el) {
   }
 
   if (action === 'export-Reports') {
-    download('wedding-fund-laporan.csv', (db.Transactions || []).map(x => ({
+    download('wedding-fund-laporan.csv', (db.Transactions || []).filter(x => {
+      if (report.from && date(x.date) < report.from) return false;
+      if (report.to && date(x.date) > report.to) return false;
+      if (report.owner !== 'Semua' && x.owner !== report.owner) return false;
+      return true;
+    }).map(x => ({
       Tanggal: x.date,
       Jenis: x.type,
       Keterangan: x.description,

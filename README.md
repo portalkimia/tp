@@ -1,6 +1,8 @@
 # Wedding Fund
 
-Website Wedding Fund di-host publik melalui GitHub Pages. Semua pengunjung melihat halaman login, tetapi API Google Apps Script hanya memberikan akses spreadsheet setelah username/password cocok. Kredensial tidak pernah ditanam di HTML atau repository.
+Website Wedding Fund di-host publik melalui GitHub Pages. Semua pengunjung melihat halaman login, tetapi API Google Apps Script hanya memberikan akses spreadsheet setelah username/password cocok. Kredensial aktif harus disimpan hanya di Script Properties.
+
+**Pembaruan keamanan:** aplikasi tidak lagi membuat akun/password bawaan. Jika deployment lama masih memakai password contoh `nikah2025`, ganti kedua password di Script Properties sebelum login; password lama tersebut sekarang ditolak. Logout mencabut sesi di server dan menghapus data dari tab browser.
 
 ## File penting
 
@@ -27,7 +29,7 @@ GitHub Pages menayangkan layar login kepada umum. Username/password dan data She
    - `APP_LOGIN_USER_1`, `APP_LOGIN_PASS_1`: username dan password Anda.
    - `APP_LOGIN_USER_2`, `APP_LOGIN_PASS_2`: username dan password pasangan.
 3. Pilih dua password kuat dan berbeda dari password akun Google. Simpan hanya di Script Properties, jangan di source repository.
-4. Jalankan `setupDatabase()` sebagai pemilik spreadsheet untuk menyiapkan tab, header, dropdown, kategori awal, dan trigger input Sheet.
+4. Jalankan `setupDatabase()` sebagai pemilik spreadsheet untuk menyiapkan tab, header, dropdown, kategori awal, dan trigger input Sheet. Fungsi ini tidak lagi membuat kredensial contoh.
 5. Deploy Web App dengan **Execute as me** dan akses **Anyone** (anonymous). Endpoint dapat dijangkau publik, tetapi setiap operasi data mensyaratkan sesi hasil login.
 6. Masukkan URL deployment `/exec` ke `config.js`, build, lalu unggah dua file frontend.
 
@@ -41,3 +43,12 @@ GitHub Pages menayangkan layar login kepada umum. Username/password dan data She
 - `Settings`: profil pasangan, tanggal acara, target, preferensi pengingat.
 
 Input web dan input langsung Sheet memakai sumber yang sama. Trigger memberi ID dan menghubungkan kategori/vendor lewat nama.
+
+## Aturan perhitungan
+
+- `Savings` mencatat setoran pasangan/keluarga; `Transactions` berjenis pemasukan mencatat dana tambahan seperti hibah. Catat satu penerimaan di salah satu tempat saja agar tidak dihitung dua kali.
+- Dana terkumpul = setoran tabungan + pemasukan tambahan. Sisa kebutuhan dana = target RAB dikurangi dana terkumpul, minimal nol. Pengeluaran adalah realisasi biaya; saldo kas saat ini dapat dihitung sebagai dana terkumpul dikurangi pengeluaran.
+- Setiap kategori hanya boleh memiliki satu baris RAB baru. Jika Sheet lama sudah mengandung baris ganda, tampilan menjumlahkannya, tetapi hapus atau gabungkan baris duplikat sebelum mengubah anggaran kategori itu.
+- Pengingat hanya muncul di aplikasi saat dibuka; pengaturan hari mengatur batas peringatan tugas/tagihan. Tidak ada pengiriman email atau WhatsApp otomatis.
+
+Jalankan `npm test` untuk memeriksa login, logout, validasi anggaran/vendor, filter laporan, dan pengingat tanpa mengubah spreadsheet.
