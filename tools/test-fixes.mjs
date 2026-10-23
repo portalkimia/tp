@@ -158,5 +158,17 @@ assert.match(brief, /Lihat sumber 2/);
 const budgetHtml = app.budget();
 assert.match(budgetHtml, /PIC:/);
 assert.match(budgetHtml, /Ubah Anggaran/);
+assert.match(budgetHtml, /Dana Masuk \(Tabungan\)/);
+assert.match(budgetHtml, /Sisa Uang Saat Ini \(Kas\)/);
+
+demo.Moodboard.push({
+  id: 'd',
+  title: 'Drive Photo',
+  section: 'Dekorasi',
+  imageUrl: 'https://drive.google.com/file/d/1AbCdEfGhIjKlMnOpQrStUvWxYz/view?usp=sharing',
+  vendorId: 'ven-1'
+});
+const briefWithDrive = app.moodboard();
+assert.match(briefWithDrive, /drive\.google\.com\/thumbnail\?id=1AbCdEfGhIjKlMnOpQrStUvWxYz/);
 
 console.log('Semua pengujian perbaikan berhasil.');

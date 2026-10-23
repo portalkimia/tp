@@ -592,6 +592,38 @@ const safeLink = value => {
   }
 };
 
+function resolveMoodboardImageUrl_(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  if (/^data:image\/(?:jpeg|jpg|png|webp);base64,[a-z0-9+/=]+$/i.test(s)) return s;
+  if (!/^https:\/\//i.test(s)) return '';
+  try {
+    const u = new URL(s);
+    if (u.hostname.includes('google.') && u.pathname.includes('/imgres') && u.searchParams.get('imgurl')) {
+      return resolveMoodboardImageUrl_(u.searchParams.get('imgurl'));
+    }
+    if (u.hostname.includes('drive.google.com') || u.hostname.includes('docs.google.com')) {
+      const m = u.pathname.match(/\/file\/d\/([a-zA-Z0-9_-]+)/) || u.pathname.match(/\/d\/([a-zA-Z0-9_-]+)/);
+      const id = (m && m[1]) || u.searchParams.get('id');
+      if (id) return 'https://drive.google.com/thumbnail?id=' + encodeURIComponent(id) + '&sz=w1200';
+    }
+    if (u.hostname.includes('dropbox.com')) {
+      u.searchParams.delete('dl');
+      u.searchParams.set('raw', '1');
+      return esc(u.href);
+    }
+    if ((u.hostname === 'imgur.com' || u.hostname === 'www.imgur.com') && /^\/[a-zA-Z0-9]+$/.test(u.pathname)) {
+      return 'https://i.imgur.com' + u.pathname + '.jpg';
+    }
+    if (u.hostname === 'github.com' && u.pathname.includes('/blob/')) {
+      return esc('https://raw.githubusercontent.com' + u.pathname.replace('/blob/', '/'));
+    }
+    return esc(u.href);
+  } catch (e) {
+    return '';
+  }
+}
+
 const catName = id => esc((db?.Categories || []).find(x => String(x.id) === String(id))?.name || '—');
 const vendorName = id => esc((db?.Vendors || []).find(x => String(x.id) === String(id))?.name || '—');
 const isExpense = r => ['pengeluaran', 'expense'].includes(String(r.type || '').toLowerCase());
@@ -838,6 +870,7 @@ function home() {
   const income = summary.income || 0;
   const savings = summary.savings || 0;
   const funding = savings + income;
+  const cashAvailable = funding - expenses;
   const remainingNeeded = Math.max(0, planned - funding);
   const fundingPercent = planned > 0 ? Math.min(100, Math.round((funding / planned) * 1000) / 10) : 0;
   const reminders = reminderSettings();
@@ -1058,16 +1091,16 @@ function home() {
         <div class="bg-surface-container-lowest rounded-2xl p-space-lg shadow-[0_4px_20px_-2px_rgba(90,60,65,0.05)] relative overflow-hidden flex flex-col justify-between">
           <div class="flex items-start justify-between">
             <div>
-              <span class="font-label-sm text-label-sm uppercase tracking-wider text-on-surface-variant font-bold">Sisa Kebutuhan Dana</span>
-              <div class="mt-space-xs font-headline-lg text-headline-lg text-error font-semibold">${cash(remainingNeeded)}</div>
+              <span class="font-label-sm text-label-sm uppercase tracking-wider text-on-surface-variant font-bold">Sisa Uang Saat Ini (Saldo Kas)</span>
+              <div class="mt-space-xs font-headline-lg text-headline-lg ${cashAvailable < 0 ? 'text-error' : 'text-secondary'} font-semibold">${cash(cashAvailable)}</div>
             </div>
-            <div class="w-10 h-10 rounded-xl bg-error-container/60 flex items-center justify-center text-error">
-              <span class="material-symbols-outlined text-[22px]">pending_actions</span>
+            <div class="w-10 h-10 rounded-xl ${cashAvailable < 0 ? 'bg-error-container/60 text-error' : 'bg-secondary-container/50 text-secondary'} flex items-center justify-center">
+              <span class="material-symbols-outlined text-[22px]">account_balance_wallet</span>
             </div>
           </div>
           <div class="mt-space-md pt-space-xs flex items-center justify-between font-body-sm text-body-sm text-on-surface-variant">
-            <span>Perlu ~${cash(monthlyNeed)} / bln</span>
-            <span class="font-label-sm text-label-sm text-on-surface-variant font-medium">${monthsLeft} bln tersisa</span>
+            <span>Setelah bayar vendor & belanja</span>
+            <span class="font-label-sm text-label-sm text-on-surface-variant font-medium">${remainingNeeded > 0 ? `Target nabung ~${cash(monthlyNeed)}/bln` : 'Target Dana Terpenuhi'}</span>
           </div>
         </div>
       </div>
@@ -1263,9 +1296,18 @@ function budget() {
   }
 
   const plannedTotal = (db.Budget || []).reduce((s, x) => s + Number(x.plannedAmount || 0), 0);
-  const actualTotal = Object.values(actualMap).reduce((s, v) => s + v, 0);
-  const remainingTotal = plannedTotal - actualTotal;
-  const pctTotal = plannedTotal > 0 ? Math.round((actualTotal / plannedTotal) * 1000) / 10 : 0;
+  const targetPlafon = Number(db.Settings?.budgetTarget || 0);
+  const savingsTotal = Number(db.summary?.savings ?? (db.Savings || []).reduce((s, x) => s + Number(x.amount || 0), 0));
+  const incomeTotal = Number(db.summary?.income ?? (db.Transactions || []).filter(isIncome).reduce((s, x) => s + Number(x.amount || 0), 0));
+  const fundingTotal = savingsTotal + incomeTotal;
+  const categorizedSpent = Object.values(actualMap).reduce((s, v) => s + v, 0);
+  const expenseTotal = Number(db.summary?.expenses ?? (db.Transactions || []).filter(isExpense).reduce((s, x) => s + Number(x.amount || 0), 0));
+  const actualTotal = Math.max(categorizedSpent, expenseTotal);
+  const uncategorizedSpent = Math.max(0, actualTotal - categorizedSpent);
+  const effectivePlanned = plannedTotal > 0 ? plannedTotal : (targetPlafon > 0 ? targetPlafon : fundingTotal);
+  const remainingTotal = effectivePlanned - actualTotal;
+  const cashAvailable = fundingTotal - actualTotal;
+  const pctTotal = effectivePlanned > 0 ? Math.round((actualTotal / effectivePlanned) * 1000) / 10 : 0;
 
   const cardsHtml = categories.map(c => {
     const b = (db.Budget || []).find(x => String(x.categoryId) === String(c.id));
@@ -1371,38 +1413,50 @@ function budget() {
           </div>
         </div>
 
-        <div class="mt-space-xl grid grid-cols-1 md:grid-cols-3 gap-space-md pt-space-lg border-t border-surface-container">
+        <div class="mt-space-xl grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-space-md pt-space-lg border-t border-surface-container">
           <div class="p-space-md rounded-xl bg-surface-container-low/70 flex items-center justify-between">
             <div>
-              <span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider block">Total Plafon Budget</span>
-              <span class="font-headline-md text-headline-md text-on-surface font-bold">${cash(plannedTotal)}</span>
+              <span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider block">Total Plafon RAB</span>
+              <span class="font-headline-md text-headline-md text-on-surface font-bold">${cash(effectivePlanned)}</span>
+              <span class="font-body-sm text-[11px] text-on-surface-variant block mt-0.5">${plannedTotal > 0 ? `Terplot di ${(db.Budget || []).length} kategori` : (targetPlafon > 0 ? 'Dari Target Plafon Pengaturan' : 'Mengacu Dana Tabungan Masuk')}</span>
             </div>
-            <div class="w-10 h-10 rounded-full bg-surface-container-lowest flex items-center justify-center text-primary shadow-sm">
-              <span class="material-symbols-outlined text-[20px]">account_balance_wallet</span>
+            <div class="w-10 h-10 rounded-full bg-surface-container-lowest flex items-center justify-center text-primary shadow-sm shrink-0">
+              <span class="material-symbols-outlined text-[20px]">calculate</span>
+            </div>
+          </div>
+          <div class="p-space-md rounded-xl bg-tertiary-fixed/30 flex items-center justify-between">
+            <div>
+              <span class="font-label-sm text-label-sm text-on-tertiary-fixed-variant uppercase tracking-wider block">Dana Masuk (Tabungan)</span>
+              <span class="font-headline-md text-headline-md text-on-surface font-bold">${cash(fundingTotal)}</span>
+              <span class="font-body-sm text-[11px] text-on-surface-variant block mt-0.5">Tabungan ${cash(savingsTotal)}${incomeTotal > 0 ? ` + Pemasukan ${cash(incomeTotal)}` : ''}</span>
+            </div>
+            <div class="w-10 h-10 rounded-full bg-surface-container-lowest flex items-center justify-center text-tertiary shadow-sm shrink-0">
+              <span class="material-symbols-outlined text-[20px]">savings</span>
             </div>
           </div>
           <div class="p-space-md rounded-xl bg-primary-fixed/30 flex items-center justify-between">
             <div>
               <div class="flex items-center gap-2">
-                <span class="font-label-sm text-label-sm text-on-primary-fixed-variant uppercase tracking-wider">Realisasi Saat Ini</span>
+                <span class="font-label-sm text-label-sm text-on-primary-fixed-variant uppercase tracking-wider">Terpakai (Vendor & Belanja)</span>
                 <span class="px-2 py-0.5 rounded-full bg-primary-fixed text-on-primary-fixed font-label-sm text-label-sm font-semibold">${pctTotal}%</span>
               </div>
               <span class="font-headline-md text-headline-md text-primary font-bold">${cash(actualTotal)}</span>
+              <span class="font-body-sm text-[11px] text-on-surface-variant block mt-0.5">${uncategorizedSpent > 0 ? `Termasuk ${cash(uncategorizedSpent)} belum berkategori` : 'DP/pelunasan vendor & pembelian'}</span>
             </div>
-            <div class="w-10 h-10 rounded-full bg-surface-container-lowest flex items-center justify-center text-primary shadow-sm">
+            <div class="w-10 h-10 rounded-full bg-surface-container-lowest flex items-center justify-center text-primary shadow-sm shrink-0">
               <span class="material-symbols-outlined text-[20px]">payments</span>
             </div>
           </div>
           <div class="p-space-md rounded-xl bg-secondary-fixed/40 flex items-center justify-between">
             <div>
               <div class="flex items-center gap-2">
-                <span class="font-label-sm text-label-sm text-on-secondary-fixed-variant uppercase tracking-wider">Sisa Anggaran</span>
-                <span class="px-2 py-0.5 rounded-full bg-secondary-fixed text-secondary font-label-sm text-label-sm font-semibold">${Math.max(0, Math.round((remainingTotal / (plannedTotal || 1)) * 100))}%</span>
+                <span class="font-label-sm text-label-sm text-on-secondary-fixed-variant uppercase tracking-wider">Sisa Uang Saat Ini (Kas)</span>
               </div>
-              <span class="font-headline-md text-headline-md text-secondary font-bold">${cash(remainingTotal)}</span>
+              <span class="font-headline-md text-headline-md ${cashAvailable < 0 ? 'text-error' : 'text-secondary'} font-bold">${cash(cashAvailable)}</span>
+              <span class="font-body-sm text-[11px] text-on-surface-variant block mt-0.5">Uang tersisa setelah bayar vendor • Sisa RAB: ${cash(remainingTotal)}</span>
             </div>
-            <div class="w-10 h-10 rounded-full bg-surface-container-lowest flex items-center justify-center text-secondary shadow-sm">
-              <span class="material-symbols-outlined text-[20px]">savings</span>
+            <div class="w-10 h-10 rounded-full bg-surface-container-lowest flex items-center justify-center text-secondary shadow-sm shrink-0">
+              <span class="material-symbols-outlined text-[20px]">account_balance_wallet</span>
             </div>
           </div>
         </div>
@@ -1497,35 +1551,35 @@ function transactions() {
       <div class="grid grid-cols-1 md:grid-cols-3 gap-space-md mb-space-lg">
         <div class="bg-surface-container-lowest rounded-2xl p-space-lg shadow-sm flex flex-col justify-between">
           <div class="flex items-center justify-between mb-space-sm">
-            <span class="font-label-md text-label-md text-on-surface-variant font-medium">Total Pemasukan Bersama</span>
+            <span class="font-label-md text-label-md text-on-surface-variant font-medium">Total Dana Masuk (Tabungan & Pemasukan)</span>
             <div class="w-9 h-9 rounded-xl bg-secondary-container text-on-secondary-container flex items-center justify-center">
               <span class="material-symbols-outlined text-[20px]">south_west</span>
             </div>
           </div>
-          <div class="font-display-lg text-display-lg text-secondary font-bold tracking-tight">${cash(incomeTotal)}</div>
-          <span class="font-body-sm text-body-sm text-on-surface-variant text-[11px] mt-2">Termasuk hibah keluarga & donasi</span>
+          <div class="font-display-lg text-display-lg text-secondary font-bold tracking-tight">${cash(savingsTotal + incomeTotal)}</div>
+          <span class="font-body-sm text-body-sm text-on-surface-variant text-[11px] mt-2">Tabungan ${cash(savingsTotal)} + Pemasukan/Hibah ${cash(incomeTotal)}</span>
         </div>
 
         <div class="bg-surface-container-lowest rounded-2xl p-space-lg shadow-sm flex flex-col justify-between">
           <div class="flex items-center justify-between mb-space-sm">
-            <span class="font-label-md text-label-md text-on-surface-variant font-medium">Total Pengeluaran Realisasi</span>
+            <span class="font-label-md text-label-md text-on-surface-variant font-medium">Total Terpakai (Vendor & Belanja)</span>
             <div class="w-9 h-9 rounded-xl bg-primary-fixed text-primary flex items-center justify-center">
               <span class="material-symbols-outlined text-[20px]">north_east</span>
             </div>
           </div>
           <div class="font-display-lg text-display-lg text-primary font-bold tracking-tight">${cash(expenseTotal)}</div>
-          <span class="font-body-sm text-body-sm text-on-surface-variant text-[11px] mt-2">Pembayaran DP & pelunasan pos RAB</span>
+          <span class="font-body-sm text-body-sm text-on-surface-variant text-[11px] mt-2">Pembayaran DP/pelunasan vendor & pembelian lainnya</span>
         </div>
 
         <div class="bg-surface-container-lowest rounded-2xl p-space-lg shadow-sm flex flex-col justify-between">
           <div class="flex items-center justify-between mb-space-sm">
-            <span class="font-label-md text-label-md text-on-surface-variant font-medium">Saldo Kas Siap Pakai</span>
+            <span class="font-label-md text-label-md text-on-surface-variant font-medium">Sisa Uang Saat Ini (Saldo Kas Siap Pakai)</span>
             <div class="w-9 h-9 rounded-xl bg-tertiary-fixed text-on-tertiary-fixed flex items-center justify-center">
               <span class="material-symbols-outlined text-[20px]">account_balance_wallet</span>
             </div>
           </div>
-          <div class="font-display-lg text-display-lg text-on-surface font-bold tracking-tight">${cash(cashBalance)}</div>
-          <span class="font-body-sm text-body-sm text-on-surface-variant text-[11px] mt-2">Likuiditas kas tabungan bersama aktif</span>
+          <div class="font-display-lg text-display-lg ${cashBalance < 0 ? 'text-error' : 'text-on-surface'} font-bold tracking-tight">${cash(cashBalance)}</div>
+          <span class="font-body-sm text-body-sm text-on-surface-variant text-[11px] mt-2">Uang nyata tersisa setelah dikurangi pembayaran vendor & belanja</span>
         </div>
       </div>
 
@@ -2052,10 +2106,13 @@ function vendors() {
 function savings() {
   const allSavings = (db.Savings || []).slice().sort((a, b) => String(b.date).localeCompare(String(a.date)));
   const totalSavings = allSavings.reduce((s, x) => s + Number(x.amount || 0), 0);
+  const additionalIncome = Number(db.summary?.income ?? (db.Transactions || []).filter(isIncome).reduce((s, x) => s + Number(x.amount || 0), 0));
+  const totalExpenses = Number(db.summary?.expenses ?? (db.Transactions || []).filter(isExpense).reduce((s, x) => s + Number(x.amount || 0), 0));
+  const totalFunding = totalSavings + additionalIncome;
+  const cashAvailable = totalFunding - totalExpenses;
   const planned = db.summary?.planned > 0 ? db.summary.planned : Number(db.Settings?.budgetTarget || 0);
-  const pct = planned > 0 ? Math.min(100, Math.round((totalSavings / planned) * 1000) / 10) : 0;
-  const additionalIncome = Number(db.summary?.income || 0);
-  const remainingDeficit = Math.max(0, planned - totalSavings - additionalIncome);
+  const pct = planned > 0 ? Math.min(100, Math.round((totalFunding / planned) * 1000) / 10) : 0;
+  const remainingDeficit = Math.max(0, planned - totalFunding);
 
   const savingsCowo = allSavings.filter(x => x.owner === 'Cowo').reduce((s, x) => s + Number(x.amount || 0), 0);
   const savingsCewe = allSavings.filter(x => x.owner === 'Cewe').reduce((s, x) => s + Number(x.amount || 0), 0);
@@ -2110,15 +2167,23 @@ function savings() {
             <p class="font-body-md text-body-md text-on-surface-variant max-w-2xl">
               Pantau pertumbuhan modal bersama menuju hari H. Setoran rutin menjaga kelancaran termin pembayaran tanpa defisit.
             </p>
-            <div class="flex items-center gap-space-lg py-2 mt-2 border-t border-surface-container">
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-space-md py-3 mt-2 border-t border-surface-container">
               <div>
-                <span class="font-label-sm text-label-sm text-on-surface-variant block">Sisa Kebutuhan setelah Tabungan & Pemasukan</span>
-                <span class="font-headline-sm text-headline-sm text-primary font-bold">${cash(remainingDeficit)}</span>
+                <span class="font-label-sm text-label-sm text-on-surface-variant block">Total Tabungan Masuk</span>
+                <span class="font-headline-sm text-headline-sm text-secondary font-bold">${cash(totalFunding)}</span>
               </div>
-              <div class="w-px h-8 bg-surface-container"></div>
               <div>
-                <span class="font-label-sm text-label-sm text-on-surface-variant block">Target Plafon</span>
+                <span class="font-label-sm text-label-sm text-on-surface-variant block">Terpakai (Vendor & Belanja)</span>
+                <span class="font-headline-sm text-headline-sm text-primary font-bold">- ${cash(totalExpenses)}</span>
+              </div>
+              <div>
+                <span class="font-label-sm text-label-sm text-on-surface-variant block">Sisa Uang Saat Ini (Saldo Kas)</span>
+                <span class="font-headline-sm text-headline-sm ${cashAvailable < 0 ? 'text-error' : 'text-secondary'} font-bold">${cash(cashAvailable)}</span>
+              </div>
+              <div>
+                <span class="font-label-sm text-label-sm text-on-surface-variant block">Target Plafon RAB</span>
                 <span class="font-headline-sm text-headline-sm text-on-surface font-bold">${cash(planned)}</span>
+                <span class="text-[11px] text-on-surface-variant block">Kurang: ${cash(remainingDeficit)}</span>
               </div>
             </div>
           </div>
@@ -2212,14 +2277,20 @@ function moodboard() {
   const palette = String(settings.moodboardPalette || '').split(/[,\s]+/).filter(x => /^#[0-9a-f]{6}$/i.test(x)).slice(0, 8);
   const vendorOptions = (db.Vendors || []).map(x => `<option value="${esc(x.id)}" ${String(x.id) === moodboardVendor ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
   const cards = shown.map(x => {
-    const imageUrls = String(x.imageUrl || '').split(/[\s,]+/).filter(u => /^https:\/\//i.test(u)).map(safeLink).filter(Boolean);
-    const sourceUrls = String(x.sourceUrl || '').split(/[\s,]+/).filter(u => /^https:\/\//i.test(u)).map(safeLink).filter(Boolean);
+    const rawImgTokens = String(x.imageUrl || '').split(/[\s,]+/).filter(Boolean);
+    const rawSrcTokens = String(x.sourceUrl || '').split(/[\s,]+/).filter(Boolean);
+    let imageEntries = rawImgTokens.map(raw => ({ raw, resolved: resolveMoodboardImageUrl_(raw) })).filter(it => it.resolved);
+    const sourceUrls = rawSrcTokens.filter(u => /^https:\/\//i.test(u)).map(safeLink).filter(Boolean);
+    if (!imageEntries.length && rawSrcTokens.length) {
+      imageEntries = rawSrcTokens.map(raw => ({ raw, resolved: resolveMoodboardImageUrl_(raw) })).filter(it => it.resolved);
+    }
     const swatch = /^#[0-9a-f]{6}$/i.test(String(x.color || '')) ? x.color : '#D7BFA7';
     const assigned = (db.Vendors || []).find(v => String(v.id) === String(x.vendorId));
-    const imagesHtml = imageUrls.length > 1
-      ? `<div class="w-full h-full grid ${imageUrls.length === 2 ? 'grid-cols-2' : 'grid-cols-2 grid-rows-2'} gap-0.5">${imageUrls.slice(0, 4).map(u => `<img src="${u}" alt="Referensi ${esc(x.title)}" loading="lazy" referrerpolicy="no-referrer" class="w-full h-full object-cover" onerror="this.style.display='none'">`).join('')}</div>`
-      : imageUrls.length === 1
-        ? `<img src="${imageUrls[0]}" alt="Referensi ${esc(x.title)}" loading="lazy" referrerpolicy="no-referrer" class="w-full h-full object-cover" onerror="this.style.display='none'">`
+    const renderImgTag = it => `<div class="relative w-full h-full overflow-hidden"><img src="${it.resolved}" data-raw="${esc(it.raw)}" alt="Referensi ${esc(x.title)}" loading="eager" referrerpolicy="no-referrer" class="mood-img w-full h-full object-cover block" onerror="if(!this.dataset.retried&&this.dataset.raw&&/^https:\\/\\//i.test(this.dataset.raw)){this.dataset.retried='1';this.src='https://wsrv.nl/?url='+encodeURIComponent(this.dataset.raw);}else{this.style.display='none';if(this.nextElementSibling)this.nextElementSibling.classList.remove('hidden');}"><div class="hidden mood-screen-only w-full h-full flex flex-col items-center justify-center p-3 text-center bg-black/25 text-white text-xs gap-1"><span class="material-symbols-outlined text-2xl">broken_image</span><span>Gambar tidak dapat dimuat langsung (pastikan link berupa file gambar langsung / publik)</span>${/^https:\/\//i.test(it.raw) ? `<a href="${safeLink(it.raw)}" target="_blank" rel="noopener noreferrer" class="underline font-bold">Buka tautan ↗</a>` : ''}</div></div>`;
+    const imagesHtml = imageEntries.length > 1
+      ? `<div class="w-full h-full grid ${imageEntries.length === 2 ? 'grid-cols-2' : 'grid-cols-2 grid-rows-2'} gap-0.5">${imageEntries.slice(0, 4).map(renderImgTag).join('')}</div>`
+      : imageEntries.length === 1
+        ? renderImgTag(imageEntries[0])
         : '<div class="w-full h-full flex items-center justify-center text-white/80"><span class="material-symbols-outlined text-6xl">palette</span></div>';
     const sourcesHtml = sourceUrls.length
       ? `<div class="flex flex-wrap gap-2">${sourceUrls.map((u, idx) => `<a href="${u}" target="_blank" rel="noopener noreferrer" class="text-sm text-primary underline">${sourceUrls.length > 1 ? 'Lihat sumber ' + (idx + 1) : 'Lihat sumber'}</a>`).join('')}</div>`
@@ -2242,7 +2313,7 @@ function moodboard() {
   }).join('');
 
   return `<div class="w-full max-w-7xl mx-auto pb-space-xl" id="wf-moodboard-page">
-    <style>@media print{#wf-moodboard-page,#wf-moodboard-page *{print-color-adjust:exact!important;-webkit-print-color-adjust:exact!important}aside,header,#wedding-fund-connection,.mood-edit-controls,.mood-screen-only{display:none!important}body .pl-64{padding-left:0!important}main{padding:0!important;background:white!important}#wf-moodboard-page{max-width:none!important;padding:0!important}.mood-card{break-inside:avoid;box-shadow:none!important}#wf-moodboard-page .mood-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}</style>
+    <style>@media print{#wf-moodboard-page,#wf-moodboard-page *{print-color-adjust:exact!important;-webkit-print-color-adjust:exact!important}aside,header,#wedding-fund-connection,.mood-edit-controls,.mood-screen-only{display:none!important}body .pl-64{padding-left:0!important}main{padding:0!important;background:white!important;visibility:visible!important}#wf-moodboard-page{max-width:none!important;padding:0!important}.mood-card{break-inside:avoid;page-break-inside:avoid;box-shadow:none!important}.mood-card img.mood-img{display:block!important;width:100%!important;height:100%!important;max-height:12rem!important;object-fit:cover!important}#wf-moodboard-page .mood-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}}</style>
     <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-7">
       <div><p class="text-xs font-bold tracking-widest uppercase text-primary mb-1">Konsep Pernikahan</p><h1 class="font-headline-lg text-headline-lg font-bold">Moodboard</h1><p class="text-on-surface-variant mt-2 max-w-2xl">Satukan gambaran suasana, warna, dan referensi visual agar setiap vendor memahami arahan yang sama.</p></div>
       <div class="mood-screen-only flex flex-wrap gap-2"><button data-action="print-moodboard" class="px-4 py-2.5 rounded-xl border border-outline-variant bg-white font-semibold text-sm flex items-center gap-2"><span class="material-symbols-outlined text-lg">print</span>Cetak / Simpan PDF</button><button data-action="add-Moodboard" class="px-4 py-2.5 rounded-xl bg-primary text-on-primary font-semibold text-sm flex items-center gap-2"><span class="material-symbols-outlined text-lg">add</span>Tambah Referensi</button></div>
@@ -2283,7 +2354,17 @@ function reports() {
   const income = tx.filter(isIncome);
   const expSum = expenses.reduce((s, x) => s + Number(x.amount || 0), 0);
   const incSum = income.reduce((s, x) => s + Number(x.amount || 0), 0);
-  const planned = (db.Budget || []).reduce((s, x) => s + Number(x.plannedAmount || 0), 0);
+  const savRows = (db.Savings || []).filter(x => {
+    if (report.from && date(x.date) < report.from) return false;
+    if (report.to && date(x.date) > report.to) return false;
+    if (report.owner !== 'Semua' && x.owner !== report.owner) return false;
+    return true;
+  });
+  const savSum = savRows.reduce((s, x) => s + Number(x.amount || 0), 0);
+  const totalIn = savSum + incSum;
+  const cashLeft = totalIn - expSum;
+  const plannedRaw = (db.Budget || []).reduce((s, x) => s + Number(x.plannedAmount || 0), 0);
+  const planned = plannedRaw > 0 ? plannedRaw : (Number(db.Settings?.budgetTarget || 0) || totalIn);
   const variance = planned - expSum;
 
   // Breakdown by category
@@ -2352,18 +2433,22 @@ function reports() {
         <div class="bg-surface-container-lowest p-space-md rounded-2xl shadow-sm">
           <span class="font-label-sm text-on-surface-variant uppercase tracking-wider block">Plafon Anggaran RAB</span>
           <div class="font-headline-lg text-headline-lg font-bold text-on-surface mt-1">${cash(planned)}</div>
+          <span class="text-[11px] text-on-surface-variant block mt-0.5">Sisa Plafon RAB: ${cash(variance)}</span>
+        </div>
+        <div class="bg-surface-container-lowest p-space-md rounded-2xl shadow-sm">
+          <span class="font-label-sm text-on-surface-variant uppercase tracking-wider block">Dana Masuk (Tabungan & Pemasukan)</span>
+          <div class="font-headline-lg text-headline-lg font-bold text-secondary mt-1">${cash(totalIn)}</div>
+          <span class="text-[11px] text-on-surface-variant block mt-0.5">Tabungan ${cash(savSum)} + Pemasukan ${cash(incSum)}</span>
         </div>
         <div class="bg-surface-container-lowest p-space-md rounded-2xl shadow-sm">
           <span class="font-label-sm text-on-surface-variant uppercase tracking-wider block">Total Pengeluaran</span>
           <div class="font-headline-lg text-headline-lg font-bold text-primary mt-1">${cash(expSum)}</div>
+          <span class="text-[11px] text-on-surface-variant block mt-0.5">DP/pelunasan vendor & belanja</span>
         </div>
         <div class="bg-surface-container-lowest p-space-md rounded-2xl shadow-sm">
-          <span class="font-label-sm text-on-surface-variant uppercase tracking-wider block">Efisiensi / Varian</span>
-          <div class="font-headline-lg text-headline-lg font-bold ${variance < 0 ? 'text-error' : 'text-secondary'} mt-1">${variance >= 0 ? '+' : ''}${cash(variance)}</div>
-        </div>
-        <div class="bg-surface-container-lowest p-space-md rounded-2xl shadow-sm">
-          <span class="font-label-sm text-on-surface-variant uppercase tracking-wider block">Pemasukan / Donasi</span>
-          <div class="font-headline-lg text-headline-lg font-bold text-secondary mt-1">${cash(incSum)}</div>
+          <span class="font-label-sm text-on-surface-variant uppercase tracking-wider block">Sisa Uang Saat Ini (Saldo Kas)</span>
+          <div class="font-headline-lg text-headline-lg font-bold ${cashLeft < 0 ? 'text-error' : 'text-secondary'} mt-1">${cash(cashLeft)}</div>
+          <span class="text-[11px] text-on-surface-variant block mt-0.5">Dana masuk dikurangi pengeluaran</span>
         </div>
       </div>
 
@@ -2607,6 +2692,13 @@ function openForm(sheet, r) {
       <form id="wf-record" class="flex flex-col gap-4">
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           ${fields}
+          ${sheet === 'Moodboard' ? `
+            <div class="md:col-span-2 p-3.5 rounded-xl bg-surface-container-low border border-dashed border-outline-variant flex flex-col gap-1.5">
+              <span class="font-label-sm text-label-sm font-semibold text-on-surface">Atau Pilih Foto Langsung dari HP / Laptop (Otomatis Dikompres):</span>
+              <input id="wf-moodboard-file" type="file" accept="image/*" class="text-xs text-on-surface-variant file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-primary file:text-on-primary hover:file:bg-primary-container cursor-pointer" />
+              <span class="text-[11px] text-on-surface-variant">Tips: Mendukung link Google Drive (pastikan akses "Siapa saja yang memiliki link"), link gambar langsung, atau pilih file foto dari perangkat Anda agar pasti muncul saat dicetak PDF.</span>
+            </div>
+          ` : ''}
         </div>
         <div id="wf-error" class="text-error font-body-sm hidden"></div>
         <div class="flex items-center justify-end gap-3 pt-3 border-t border-surface-container">
@@ -2616,6 +2708,37 @@ function openForm(sheet, r) {
       </form>
     </div>
   `;
+
+  const fileInput = document.getElementById('wf-moodboard-file');
+  if (fileInput) {
+    fileInput.onchange = e => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = ev => {
+        const img = new Image();
+        img.onload = () => {
+          const maxDim = 600;
+          let w = img.width, h = img.height;
+          if (w > maxDim || h > maxDim) {
+            if (w > h) { h = Math.round((h * maxDim) / w); w = maxDim; }
+            else { w = Math.round((w * maxDim) / h); h = maxDim; }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, w, h);
+          let dataUrl = canvas.toDataURL('image/jpeg', 0.72);
+          if (dataUrl.length > 45000) dataUrl = canvas.toDataURL('image/jpeg', 0.5);
+          const ta = document.querySelector('#wf-record [name="imageUrl"]');
+          if (ta) ta.value = ta.value.trim() ? (ta.value.trim() + '\n' + dataUrl) : dataUrl;
+        };
+        img.src = ev.target.result;
+      };
+      reader.readAsDataURL(file);
+    };
+  }
 
   document.getElementById('wf-record').onsubmit = async e => {
     e.preventDefault();
@@ -2667,6 +2790,7 @@ function payment(v) {
       <form id="wf-pay" class="flex flex-col gap-4">
         ${fld('Tanggal Bayar', 'date', today(), 'date', null, false, true)}
         ${fld('Nominal Pembayaran (Rp)', 'amount', due, 'number', null, false, true)}
+        ${fld('Kategori Pos RAB', 'categoryId', v.categoryId || '', 'category')}
         ${fld('Penanggung Jawab (PIC)', 'owner', owner, 'select', ownerOptions)}
         ${fld('Metode Pembayaran', 'paymentMethod', 'Transfer Bank', 'select', methods.map(x => ({ value: x, label: x })))}
         ${fld('Tautan Bukti Transfer / Invoice', 'proofLink', '', 'url', null, true)}
@@ -2685,7 +2809,7 @@ function payment(v) {
     const x = Object.fromEntries(new FormData(e.currentTarget));
     x.type = 'Pengeluaran';
     x.vendorId = v.id;
-    x.categoryId = v.categoryId || '';
+    x.categoryId = x.categoryId || v.categoryId || '';
     x.description = 'Pembayaran: ' + v.name;
     x.amount = Number(x.amount || 0);
 
@@ -2830,7 +2954,15 @@ async function act(action, el) {
   }
 
   if (action === 'print') window.print();
-  if (action === 'print-moodboard') window.print();
+  if (action === 'print-moodboard') {
+    const imgs = Array.from(document.querySelectorAll('#wf-moodboard-page img.mood-img'));
+    await Promise.all(imgs.map(img => img.complete ? Promise.resolve() : new Promise(res => {
+      img.addEventListener('load', res, { once: true });
+      img.addEventListener('error', res, { once: true });
+      setTimeout(res, 1500);
+    })));
+    window.print();
+  }
 
   if (action === 'reset-filter') {
     filter = { q: '', owner: 'Semua', from: '', to: '' };

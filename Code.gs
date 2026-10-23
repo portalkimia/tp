@@ -636,7 +636,9 @@ function validateRecord_(sheetName, r) {
     ['imageUrl', 'sourceUrl'].forEach(function(key) {
       if (r[key]) {
         const urls = String(r[key]).split(/[\s,]+/).filter(Boolean);
-        if (!urls.length || !urls.every(function(u) { return /^https:\/\/[^\s<>"']+$/i.test(u); })) {
+        if (!urls.length || !urls.every(function(u) {
+          return /^https:\/\/[^\s<>"']+$/i.test(u) || (key === 'imageUrl' && /^data:image\/(?:jpeg|jpg|png|webp);base64,[a-z0-9+/=]+$/i.test(u) && u.length <= 48000);
+        })) {
           throw new Error('Tautan moodboard harus memakai HTTPS.');
         }
       }
