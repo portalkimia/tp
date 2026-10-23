@@ -18,7 +18,8 @@ const tables = {
   Checklist: [['id', 'title', 'status']]
 };
 const sheet = name => ({
-  getLastColumn: () => tables[name][0].length,
+  getLastColumn: () => tables[name] && tables[name][0] ? tables[name][0].length : 0,
+  getLastRow: () => tables[name] ? tables[name].length : 0,
   getDataRange: () => ({ getValues: () => tables[name].map(row => row.slice()) }),
   setFrozenRows() {},
   getRange: (r, c, height = 1, width = 1) => ({
@@ -103,6 +104,7 @@ vm.createContext(client);
 vm.runInContext(clientSource.slice(0, startup) + `
 window.audit = {
   setDb: value => db = value, getDb: () => db, act, demoApi_, home, reports, budget, moodboard,
+  seserahan, rundown, guests,
   setMoodboardVendor: value => moodboardVendor = value,
   setReport: value => report = value, setDownload: fn => download = fn,
   markLoggedIn: () => sessionToken = 'old-token', DEMO_DB
@@ -170,5 +172,40 @@ demo.Moodboard.push({
 });
 const briefWithDrive = app.moodboard();
 assert.match(briefWithDrive, /drive\.google\.com\/thumbnail\?id=1AbCdEfGhIjKlMnOpQrStUvWxYz/);
+
+// Uji rendering halaman baru (Seserahan, Rundown, Guests)
+const sesHtml = app.seserahan();
+assert.match(sesHtml, /Seserahan, Belanja & Souvenir/);
+assert.match(sesHtml, /Seserahan & Hantaran/);
+assert.match(sesHtml, /Kandidat Souvenir/);
+
+const runHtml = app.rundown();
+assert.match(runHtml, /Hari-H & Rundown Acara/);
+assert.match(runHtml, /Rundown Acara/);
+assert.match(runHtml, /Ceklis Eksekusi Hari-H/);
+
+const gstHtml = app.guests();
+assert.match(gstHtml, /Daftar Tamu & RSVP Undangan/);
+assert.match(gstHtml, /Target \/ Kuota Pax/);
+
+// Uji CRUD Backend dengan custom group/phase/session fleksibel
+backend.saveRecord('Seserahan', { name: 'Kain Sutra Bugis', tab: 'Seserahan', group: 'Adat Khusus', qty: 2, unitPrice: 200000, estimatedAmount: 400000 });
+assert.equal(backend.readRecords_('Seserahan').some(r => r.name === 'Kain Sutra Bugis' && r.group === 'Adat Khusus'), true);
+
+backend.saveRecord('BudgetItems', { title: 'Tenda Tambahan VIP', group: 'Tenda & Lisensi Khusus', plannedAmount: 3000000 });
+assert.equal(backend.readRecords_('BudgetItems').some(r => r.title === 'Tenda Tambahan VIP' && r.group === 'Tenda & Lisensi Khusus'), true);
+
+backend.saveRecord('Rundown', { time: '17.00 - 18.00', activity: 'Sesi Santai Sunset', session: 'Sesi Sunset Khusus', pic: 'WO' });
+assert.equal(backend.readRecords_('Rundown').some(r => r.activity === 'Sesi Santai Sunset' && r.session === 'Sesi Sunset Khusus'), true);
+
+backend.saveRecord('Guests', { name: 'Keluarga Besar Makassar', group: 'Keluarga Khusus Luar Pulau', pax: 10, rsvpStatus: 'Hadir' });
+assert.equal(backend.readRecords_('Guests').some(r => r.name === 'Keluarga Besar Makassar' && r.group === 'Keluarga Khusus Luar Pulau'), true);
+
+// Uji idempotensi seeder template planner
+const seed1 = backend.seedPlannerTemplates('all');
+assert.equal(seed1.success, true);
+const seed2 = backend.seedPlannerTemplates('all');
+assert.equal(seed2.success, true);
+assert.equal(Object.values(seed2.seeded).every(count => count === 0), true, 'seedPlannerTemplates must be idempotent (0 new inserts on second run)');
 
 console.log('Semua pengujian perbaikan berhasil.');
