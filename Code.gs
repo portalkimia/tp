@@ -172,14 +172,16 @@ function loginUser_(username, password) {
   }
 
   let matched = false;
+  let matchedRole = '';
   const accounts = [
-    { name: u1, pass: p1 },
-    { name: u2, pass: p2 }
+    { name: u1, pass: p1, role: 'cowo' },
+    { name: u2, pass: p2, role: 'cewe' }
   ];
 
   accounts.forEach(function(acc) {
     if (acc.name && acc.pass && acc.name.toLowerCase() === u.toLowerCase() && constantTimeEqual_(p, acc.pass)) {
       matched = true;
+      matchedRole = acc.role;
     }
   });
 
@@ -191,7 +193,7 @@ function loginUser_(username, password) {
   cache.remove(throttle);
   const token = Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, '');
   cache.put('wf:session:' + token, u, 21600); // Sesi aktif 6 jam
-  return { sessionToken: token, username: u, expiresIn: 21600 };
+  return { sessionToken: token, username: u, role: matchedRole, expiresIn: 21600 };
 }
 
 function requireSession_(token) {
@@ -539,7 +541,7 @@ function readSettings_() {
   const vi = h.indexOf('value');
   const out = {};
   values.forEach(function(row) {
-    if (row[ki]) out[String(row[ki])] = row[vi];
+    if (row[ki]) out[String(row[ki])] = serializeCell_(row[vi]);
   });
   return out;
 }
@@ -615,7 +617,7 @@ function validateRecord_(sheetName, r) {
   }
 
   if (r.categoryId && !readRecords_('Categories').some(function(x) {
-    return String(x.id) === String(r.categoryId) && String(x.active) !== 'FALSE';
+    return String(x.id) === String(r.categoryId) && x.active !== false && String(x.active).toLowerCase() !== 'false';
   })) {
     throw new Error('Kategori tidak ditemukan atau sudah dinonaktifkan.');
   }
@@ -632,8 +634,11 @@ function validateRecord_(sheetName, r) {
 
   if (sheetName === 'Moodboard') {
     ['imageUrl', 'sourceUrl'].forEach(function(key) {
-      if (r[key] && !/^https:\/\/[^\s<>"']+$/i.test(String(r[key]))) {
-        throw new Error('Tautan moodboard harus memakai HTTPS.');
+      if (r[key]) {
+        const urls = String(r[key]).split(/[\s,]+/).filter(Boolean);
+        if (!urls.length || !urls.every(function(u) { return /^https:\/\/[^\s<>"']+$/i.test(u); })) {
+          throw new Error('Tautan moodboard harus memakai HTTPS.');
+        }
       }
     });
     if (r.color && !/^#[0-9a-f]{6}$/i.test(String(r.color))) {
@@ -848,11 +853,15 @@ function onWeddingFundEdit(e) {
     const categoryName = index('categoryName') ? String(sheet.getRange(row, index('categoryName')).getDisplayValue()).trim() : '';
     if (categoryName && index('categoryId')) {
       set('categoryId', resolveNamedId_('Categories', categoryName));
+    } else if (index('categoryName') && index('categoryId')) {
+      set('categoryId', '');
     }
 
     const vendorName = index('vendorName') ? String(sheet.getRange(row, index('vendorName')).getDisplayValue()).trim() : '';
     if (vendorName && index('vendorId')) {
       set('vendorId', resolveNamedId_('Vendors', vendorName));
+    } else if (index('vendorName') && index('vendorId')) {
+      set('vendorId', '');
     }
 
     if (name === 'Categories' || name === 'Vendors') {
@@ -1012,7 +1021,7 @@ function sanitizeCell_(value) {
 }
 
 function serializeCell_(value) {
-  return value instanceof Date
+  return (value instanceof Date || Object.prototype.toString.call(value) === '[object Date]')
     ? Utilities.formatDate(value, Session.getScriptTimeZone(), "yyyy-MM-dd'T'HH:mm:ssXXX")
     : value;
 }

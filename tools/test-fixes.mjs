@@ -51,7 +51,10 @@ assert.equal(props.size, 0, 'login must not create default credentials');
 for (const [key, value] of Object.entries({ APP_LOGIN_USER_1: 'one', APP_LOGIN_PASS_1: 'nikah2025', APP_LOGIN_USER_2: 'two', APP_LOGIN_PASS_2: 'long-private-password' })) props.set(key, value);
 assert.throws(() => backend.loginUser_('one', 'nikah2025'), /bawaan lama/);
 props.set('APP_LOGIN_PASS_1', 'another-private-password');
-const token = backend.loginUser_('one', 'another-private-password').sessionToken;
+const loginRes = backend.loginUser_('one', 'another-private-password');
+assert.equal(loginRes.role, 'cowo', 'first account should map to cowo role');
+assert.equal(backend.loginUser_('two', 'long-private-password').role, 'cewe', 'second account should map to cewe role');
+const token = loginRes.sessionToken;
 assert.equal(backend.requireSession_(token), 'one');
 assert.equal(backend.doPost({ parameter: { action: 'createInvitationHandoff' } }).ok, false, 'handoff requires login');
 const handoff = backend.doPost({ parameter: { action: 'createInvitationHandoff', sessionToken: token } }).result;
@@ -62,13 +65,19 @@ assert.throws(() => backend.redeemInvitationHandoff_('invalid'), /tidak valid/);
 assert.equal(backend.doPost({ parameter: { action: 'logout', sessionToken: token } }).ok, true);
 assert.throws(() => backend.requireSession_(token), /berakhir/);
 
+tables.Settings = [['key', 'value'], ['weddingDate', new Date('2026-10-18T00:00:00Z')]];
+assert.equal(typeof backend.readSettings_().weddingDate, 'string', 'Date in Settings should be serialized to string');
+
+tables.Categories.push(['c2', 'Inactive Cat', 'Opsional', false]);
+assert.throws(() => backend.saveRecord('Budget', { categoryId: 'c2', plannedAmount: 1000000, owner: 'Cowo' }), /dinonaktifkan/);
+
 backend.saveRecord('Budget', { categoryId: 'c1', plannedAmount: 10000000, owner: 'Cowo' });
 assert.throws(() => backend.saveRecord('Budget', { categoryId: 'c1', plannedAmount: 20000000, owner: 'Cewe' }), /sudah memiliki anggaran/);
 assert.throws(() => backend.saveRecord('Vendors', { id: 'v1', name: 'Vendor', categoryId: 'c1', contractAmount: 5000000 }), /kurang dari pembayaran/);
 assert.equal(tables.Vendors[1][3], 10000000);
 assert.equal(tables.Moodboard, undefined, 'new moodboard tab should be created on first use');
 assert.throws(() => backend.saveRecord('Moodboard', { title: 'Panggung', section: 'Dekorasi', imageUrl: 'javascript:alert(1)' }), /HTTPS/);
-backend.saveRecord('Moodboard', { title: 'Panggung', section: 'Dekorasi', imageUrl: 'https://example.com/dekorasi.jpg', color: '#D7BFA7', vendorId: 'v1', notes: 'Bunga putih' });
+backend.saveRecord('Moodboard', { title: 'Panggung', section: 'Dekorasi', imageUrl: 'https://example.com/dekorasi.jpg, https://example.com/dekorasi2.jpg', sourceUrl: 'https://example.com/ref1\nhttps://example.com/ref2', color: '#D7BFA7', vendorId: 'v1', notes: 'Bunga putih' });
 assert.equal(tables.Moodboard[0][0], 'id');
 assert.equal(backend.readRecords_('Moodboard')[0].notes, 'Bunga putih');
 
@@ -134,7 +143,7 @@ assert.ok(errors.length > 0);
 
 demo.Moodboard = [
   { id: 'a', title: '<script>alert(1)</script>', section: 'Dekorasi', notes: 'Umum', imageUrl: 'javascript:alert(1)', vendorId: '' },
-  { id: 'b', title: 'Khusus vendor', section: 'Venue', notes: 'Lampu hangat', vendorId: 'ven-1' },
+  { id: 'b', title: 'Khusus vendor', section: 'Venue', notes: 'Lampu hangat', imageUrl: 'https://example.com/1.jpg, https://example.com/2.jpg', sourceUrl: 'https://example.com/s1\nhttps://example.com/s2', vendorId: 'ven-1' },
   { id: 'c', title: 'Vendor lain', section: 'Catering', notes: 'Bukan untuk venue', vendorId: 'ven-2' }
 ];
 app.setMoodboardVendor('ven-1');
@@ -143,5 +152,11 @@ assert.match(brief, /Khusus vendor/);
 assert.doesNotMatch(brief, /Vendor lain/);
 assert.match(brief, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
 assert.doesNotMatch(brief, /src="javascript:/);
+assert.match(brief, /Lihat sumber 1/);
+assert.match(brief, /Lihat sumber 2/);
+
+const budgetHtml = app.budget();
+assert.match(budgetHtml, /PIC:/);
+assert.match(budgetHtml, /Ubah Anggaran/);
 
 console.log('Semua pengujian perbaikan berhasil.');

@@ -433,6 +433,7 @@ let db = null;
 let owner = localStorage.getItem('wf-owner') || 'Bersama';
 let filter = { q: '', owner: 'Semua', from: '', to: '' };
 let checkView = 'list';
+let calMonthOffset = 0;
 let checkStatus = 'Semua';
 let priorityFilter = 'all';
 let txType = 'Semua';
@@ -638,7 +639,7 @@ function fld(label, key, val, type, opts, wide, req) {
   } else if (type === 'category') {
     c = `<select class="${inputClass}" name="categoryId">`
       + '<option value="">Pilih kategori</option>'
-      + (db.Categories || []).filter(x => x.active !== false && String(x.active) !== 'FALSE').map(x => `<option value="${esc(x.id)}" ${String(x.id) === String(val) ? 'selected' : ''}>${esc(x.name)}</option>`).join('')
+      + (db.Categories || []).filter(x => x.active !== false && String(x.active).toLowerCase() !== 'false').map(x => `<option value="${esc(x.id)}" ${String(x.id) === String(val) ? 'selected' : ''}>${esc(x.name)}</option>`).join('')
       + '</select>';
   } else if (type === 'vendor') {
     c = `<select class="${inputClass}" name="vendorId">`
@@ -648,7 +649,7 @@ function fld(label, key, val, type, opts, wide, req) {
   } else if (type === 'textarea') {
     c = `<textarea class="${inputClass}" name="${key}" rows="3">${esc(val)}</textarea>`;
   } else if (type === 'checkbox') {
-    c = `<label class="flex items-center gap-2 cursor-pointer mt-1"><input name="${key}" type="checkbox" class="w-5 h-5 rounded text-primary accent-primary cursor-pointer" ${val === true || String(val) === 'TRUE' ? 'checked' : ''}><span class="font-body-sm text-on-surface">Aktif / Terverifikasi</span></label>`;
+    c = `<label class="flex items-center gap-2 cursor-pointer mt-1"><input name="${key}" type="checkbox" class="w-5 h-5 rounded text-primary accent-primary cursor-pointer" ${val === true || String(val).toLowerCase() === 'true' ? 'checked' : ''}><span class="font-body-sm text-on-surface">Aktif / Terverifikasi</span></label>`;
   } else {
     c = `<input class="${inputClass}" name="${key}" type="${type}" value="${esc(type === 'date' ? date(val) : val)}" ${req ? 'required' : ''} ${type === 'number' ? 'min="0" step="1"' : ''}>`;
   }
@@ -714,8 +715,8 @@ const modelFields = {
     fld('Bagian konsep', 'section', r.section || 'Dekorasi', 'select', ['Dekorasi', 'Venue', 'Busana', 'Makeup', 'Foto & Video', 'Undangan', 'Catering', 'Lainnya'].map(x => ({ value: x, label: x })), false, true),
     fld('Vendor tujuan', 'vendorId', r.vendorId, 'vendor'),
     fld('Urutan tampilan', 'sortOrder', r.sortOrder || 0, 'number'),
-    fld('URL gambar langsung (HTTPS)', 'imageUrl', r.imageUrl, 'url', null, true),
-    fld('URL sumber / referensi (HTTPS)', 'sourceUrl', r.sourceUrl, 'url', null, true),
+    fld('URL gambar langsung (HTTPS, pisahkan dengan koma atau baris baru jika lebih dari satu)', 'imageUrl', r.imageUrl, 'textarea', null, true),
+    fld('URL sumber / referensi (HTTPS, pisahkan dengan koma atau baris baru jika lebih dari satu)', 'sourceUrl', r.sourceUrl, 'textarea', null, true),
     fld('Warna utama (contoh #D7BFA7)', 'color', r.color || '#D7BFA7', 'text'),
     fld('Arahan untuk vendor', 'notes', r.notes, 'textarea', null, true)
   ]
@@ -834,7 +835,9 @@ function filteredChecklist_() {
 function home() {
   const summary = db.summary || {};
   const settings = db.Settings || {};
-  const planned = summary.planned || Number(settings.budgetTarget || 0);
+  const targetPlafon = Number(settings.budgetTarget || 0);
+  const plannedRab = Number(summary.planned || 0);
+  const planned = plannedRab > 0 ? plannedRab : targetPlafon;
   const expenses = summary.expenses || 0;
   const income = summary.income || 0;
   const savings = summary.savings || 0;
@@ -844,11 +847,10 @@ function home() {
   const reminders = reminderSettings();
   const expensePercent = planned > 0 ? Math.min(100, Math.round((expenses / planned) * 1000) / 10) : 0;
 
-  let monthsLeft = 5;
-  if (settings.weddingDate) {
-    const days = Math.ceil((Date.parse(date(settings.weddingDate) + 'T00:00:00Z') - Date.now()) / 86400000);
-    monthsLeft = Math.max(1, Math.round(days / 30));
-  }
+  const daysLeft = settings.weddingDate
+    ? Math.ceil((Date.parse(date(settings.weddingDate) + 'T00:00:00Z') - Date.parse(today() + 'T00:00:00Z')) / 86400000)
+    : 150;
+  const monthsLeft = Math.max(1, Math.round(Math.max(0, daysLeft) / 30));
   const monthlyNeed = Math.round(remainingNeeded / monthsLeft);
 
   // Partner contribution calculation
@@ -861,8 +863,10 @@ function home() {
 
   // Categories spending
   const actualCat = summary.categoryActual || catSpent();
-  const topCats = (db.Categories || [])
-    .filter(c => c.active !== false && String(c.active) !== 'FALSE')
+  const activeCategories = (db.Categories || []).filter(c => c.active !== false && String(c.active).toLowerCase() !== 'false');
+  const plottedCount = activeCategories.filter(c => plannedForCategory(c.id) > 0).length;
+  const plottedPct = activeCategories.length > 0 ? Math.round((plottedCount / activeCategories.length) * 100) : 0;
+  const topCats = activeCategories
     .map(c => {
       const p = plannedForCategory(c.id);
       const a = actualCat[c.id] || 0;
@@ -1005,9 +1009,9 @@ function home() {
             </div>
           </div>
           <div class="mt-space-md pt-space-xs flex items-center justify-between font-body-sm text-body-sm text-on-surface-variant">
-            <span>Kebutuhan total ${(db.Categories || []).length} pos</span>
+            <span>${targetPlafon > 0 && plannedRab > 0 && targetPlafon !== plannedRab ? `Target Plafon: ${cash(targetPlafon)}` : `Kebutuhan total ${activeCategories.length} pos`}</span>
             <span class="font-semibold text-secondary flex items-center gap-1">
-              <span class="w-1.5 h-1.5 rounded-full bg-secondary inline-block"></span>100% Terplot
+              <span class="w-1.5 h-1.5 rounded-full bg-secondary inline-block"></span>${plottedPct}% Terplot
             </span>
           </div>
         </div>
@@ -1197,7 +1201,7 @@ function home() {
               <div class="absolute bottom-3 left-4 right-4 flex items-end justify-between text-surface-container-lowest">
                 <div>
                   <div class="font-label-sm text-label-sm uppercase tracking-widest text-surface-tint">Countdown Hari Bahagia</div>
-                  <div class="font-headline-md text-headline-md font-bold leading-tight">${monthsLeft * 30} Hari Lagi</div>
+                  <div class="font-headline-md text-headline-md font-bold leading-tight">${daysLeft > 0 ? daysLeft + ' Hari Lagi' : daysLeft === 0 ? 'Hari Ini! 🎉' : 'Acara Telah Berlangsung'}</div>
                 </div>
                 <span class="font-label-sm text-label-sm bg-surface-container-lowest/20 backdrop-blur-md px-2.5 py-1 rounded-full text-surface-container-lowest">
                   ${dateFmt(settings.weddingDate || '2025-10-18')}
@@ -1251,7 +1255,7 @@ function home() {
    ========================================================================== */
 function budget() {
   const actualMap = catSpent();
-  let categories = (db.Categories || []).filter(x => x.active !== false && String(x.active) !== 'FALSE');
+  let categories = (db.Categories || []).filter(x => x.active !== false && String(x.active).toLowerCase() !== 'false');
 
   // Filter chips
   if (priorityFilter !== 'all') {
@@ -1268,6 +1272,7 @@ function budget() {
   const pctTotal = plannedTotal > 0 ? Math.round((actualTotal / plannedTotal) * 1000) / 10 : 0;
 
   const cardsHtml = categories.map(c => {
+    const b = (db.Budget || []).find(x => String(x.categoryId) === String(c.id));
     const p = plannedForCategory(c.id);
     const a = actualMap[c.id] || 0;
     const rem = p - a;
@@ -1679,12 +1684,12 @@ function checklist() {
   } else if (checkView === 'calendar') {
     // Calendar View
     const d = new Date();
-    const first = new Date(d.getFullYear(), d.getMonth(), 1);
-    const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+    const first = new Date(d.getFullYear(), d.getMonth() + calMonthOffset, 1);
+    const lastDay = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
     const cells = [];
     for (let i = 0; i < first.getDay(); i++) cells.push('<div class="min-h-[80px] p-2 bg-surface-container-low/30 rounded-xl"></div>');
     for (let day = 1; day <= lastDay; day++) {
-      const key = new Date(d.getFullYear(), d.getMonth(), day).toLocaleDateString('en-CA');
+      const key = new Date(first.getFullYear(), first.getMonth(), day).toLocaleDateString('en-CA');
       const dayTasks = rows.filter(x => date(x.dueDate) === key);
       cells.push(`
         <div class="min-h-[80px] p-2 bg-surface-container-lowest rounded-xl border border-surface-container flex flex-col justify-between">
@@ -1698,7 +1703,14 @@ function checklist() {
 
     contentHtml = `
       <div class="bg-surface-container-lowest rounded-2xl p-space-lg shadow-sm">
-        <h2 class="font-headline-md text-headline-md text-on-surface mb-4">${first.toLocaleDateString('id-ID', { month: 'long', year: 'numeric' })}</h2>
+        <div class="flex items-center justify-between gap-2 mb-4">
+          <h2 class="font-headline-md text-headline-md text-on-surface">${first.toLocaleDateString('id-ID', { month: 'long', year: 'numeric' })}</h2>
+          <div class="flex items-center gap-1.5">
+            <button data-action="cal-prev" class="px-2.5 py-1 rounded-lg bg-surface-container-low hover:bg-surface-container text-on-surface font-label-sm text-xs font-semibold transition-colors">← Sebelumnya</button>
+            <button data-action="cal-today" class="px-2.5 py-1 rounded-lg bg-surface-container-low hover:bg-surface-container text-on-surface font-label-sm text-xs font-semibold transition-colors">Bulan Ini</button>
+            <button data-action="cal-next" class="px-2.5 py-1 rounded-lg bg-surface-container-low hover:bg-surface-container text-on-surface font-label-sm text-xs font-semibold transition-colors">Berikutnya →</button>
+          </div>
+        </div>
         <div class="grid grid-cols-7 gap-2 text-center font-label-sm font-bold text-on-surface-variant mb-2">
           ${['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'].map(x => `<div>${x}</div>`).join('')}
         </div>
@@ -2044,7 +2056,7 @@ function vendors() {
 function savings() {
   const allSavings = (db.Savings || []).slice().sort((a, b) => String(b.date).localeCompare(String(a.date)));
   const totalSavings = allSavings.reduce((s, x) => s + Number(x.amount || 0), 0);
-  const planned = db.summary?.planned || Number(db.Settings?.budgetTarget || 0);
+  const planned = db.summary?.planned > 0 ? db.summary.planned : Number(db.Settings?.budgetTarget || 0);
   const pct = planned > 0 ? Math.min(100, Math.round((totalSavings / planned) * 1000) / 10) : 0;
   const additionalIncome = Number(db.summary?.income || 0);
   const remainingDeficit = Math.max(0, planned - totalSavings - additionalIncome);
@@ -2204,13 +2216,21 @@ function moodboard() {
   const palette = String(settings.moodboardPalette || '').split(/[,\s]+/).filter(x => /^#[0-9a-f]{6}$/i.test(x)).slice(0, 8);
   const vendorOptions = (db.Vendors || []).map(x => `<option value="${esc(x.id)}" ${String(x.id) === moodboardVendor ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
   const cards = shown.map(x => {
-    const imageUrl = /^https:\/\//i.test(String(x.imageUrl || '')) ? safeLink(x.imageUrl) : '';
-    const sourceUrl = /^https:\/\//i.test(String(x.sourceUrl || '')) ? safeLink(x.sourceUrl) : '';
+    const imageUrls = String(x.imageUrl || '').split(/[\s,]+/).filter(u => /^https:\/\//i.test(u)).map(safeLink).filter(Boolean);
+    const sourceUrls = String(x.sourceUrl || '').split(/[\s,]+/).filter(u => /^https:\/\//i.test(u)).map(safeLink).filter(Boolean);
     const swatch = /^#[0-9a-f]{6}$/i.test(String(x.color || '')) ? x.color : '#D7BFA7';
     const assigned = (db.Vendors || []).find(v => String(v.id) === String(x.vendorId));
+    const imagesHtml = imageUrls.length > 1
+      ? `<div class="w-full h-full grid ${imageUrls.length === 2 ? 'grid-cols-2' : 'grid-cols-2 grid-rows-2'} gap-0.5">${imageUrls.slice(0, 4).map(u => `<img src="${u}" alt="Referensi ${esc(x.title)}" loading="lazy" referrerpolicy="no-referrer" class="w-full h-full object-cover" onerror="this.style.display='none'">`).join('')}</div>`
+      : imageUrls.length === 1
+        ? `<img src="${imageUrls[0]}" alt="Referensi ${esc(x.title)}" loading="lazy" referrerpolicy="no-referrer" class="w-full h-full object-cover" onerror="this.style.display='none'">`
+        : '<div class="w-full h-full flex items-center justify-center text-white/80"><span class="material-symbols-outlined text-6xl">palette</span></div>';
+    const sourcesHtml = sourceUrls.length
+      ? `<div class="flex flex-wrap gap-2">${sourceUrls.map((u, idx) => `<a href="${u}" target="_blank" rel="noopener noreferrer" class="text-sm text-primary underline">${sourceUrls.length > 1 ? 'Lihat sumber ' + (idx + 1) : 'Lihat sumber'}</a>`).join('')}</div>`
+      : '<span></span>';
     return `<article class="mood-card bg-surface-container-lowest rounded-2xl overflow-hidden border border-outline-variant/30 shadow-sm flex flex-col">
       <div class="h-48 bg-surface-container relative overflow-hidden" style="background-color:${swatch}">
-        ${imageUrl ? `<img src="${imageUrl}" alt="Referensi ${esc(x.title)}" loading="lazy" referrerpolicy="no-referrer" class="w-full h-full object-cover" onerror="this.style.display='none'">` : '<div class="w-full h-full flex items-center justify-center text-white/80"><span class="material-symbols-outlined text-6xl">palette</span></div>'}
+        ${imagesHtml}
         <span class="absolute top-3 left-3 bg-white/95 text-on-surface text-xs font-bold rounded-full px-3 py-1 shadow-sm">${esc(x.section || 'Lainnya')}</span>
       </div>
       <div class="p-5 flex flex-col gap-3 flex-1">
@@ -2218,7 +2238,7 @@ function moodboard() {
         <p class="text-sm text-on-surface-variant whitespace-pre-wrap flex-1">${esc(x.notes || 'Belum ada arahan tambahan.')}</p>
         <p class="text-xs font-semibold text-secondary">${assigned ? 'Untuk: ' + esc(assigned.name) : 'Untuk semua vendor'}</p>
         <div class="flex items-center justify-between gap-3 border-t border-surface-container pt-3">
-          ${sourceUrl ? `<a href="${sourceUrl}" target="_blank" rel="noopener noreferrer" class="text-sm text-primary underline">Lihat sumber</a>` : '<span></span>'}
+          ${sourcesHtml}
           <div class="mood-edit-controls flex gap-2"><button data-action="edit" data-sheet="Moodboard" data-id="${esc(x.id)}" class="text-xs font-bold text-primary">Ubah</button><button data-action="delete" data-sheet="Moodboard" data-id="${esc(x.id)}" class="text-xs font-bold text-error">Hapus</button></div>
         </div>
       </div>
@@ -2477,7 +2497,7 @@ function settings() {
               <h2 class="font-headline-md text-headline-md text-on-surface mb-1">Pengingat & Notifikasi</h2>
               <div class="grid grid-cols-1 md:grid-cols-2 gap-space-md mt-space-sm items-center">
                 <label class="flex items-center gap-2 cursor-pointer">
-                  <input name="remindersEnabled" type="checkbox" class="w-5 h-5 rounded text-primary accent-primary" ${s.remindersEnabled === undefined || String(s.remindersEnabled) === 'true' ? 'checked' : ''} />
+                  <input name="remindersEnabled" type="checkbox" class="w-5 h-5 rounded text-primary accent-primary" ${s.remindersEnabled === undefined || String(s.remindersEnabled).toLowerCase() !== 'false' ? 'checked' : ''} />
                   <span class="font-body-md text-on-surface">Aktifkan pengingat deadline di dashboard</span>
                 </label>
 
@@ -2775,6 +2795,9 @@ async function act(action, el) {
   if (action === 'check-list') { checkView = 'list'; render(); }
   if (action === 'check-board') { checkView = 'board'; render(); }
   if (action === 'check-calendar') { checkView = 'calendar'; render(); }
+  if (action === 'cal-prev') { calMonthOffset -= 1; render(); }
+  if (action === 'cal-next') { calMonthOffset += 1; render(); }
+  if (action === 'cal-today') { calMonthOffset = 0; render(); }
 
   if (action === 'tab-txtype') {
     txType = el.dataset.val;
