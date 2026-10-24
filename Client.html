@@ -46,8 +46,9 @@ const priorities = ['Wajib', 'Penting', 'Opsional'];
 const statuses = ['Belum mulai', 'Berjalan', 'Menunggu', 'Selesai'];
 const methods = ['Transfer Bank', 'QRIS / E-Wallet', 'Tunai', 'Kartu Kredit'];
 
-let sessionToken = sessionStorage.getItem('wf-session-token') || '';
-let isDemo = sessionStorage.getItem('wf-demo-mode') === 'true';
+let owner = localStorage.getItem('wf-owner') || 'Bersama';
+let sessionToken = localStorage.getItem('wf-session-token') || sessionStorage.getItem('wf-session-token') || '';
+let isDemo = localStorage.getItem('wf-demo-mode') === 'true' || sessionStorage.getItem('wf-demo-mode') === 'true';
 const inGas = !!(window.google && google.script && google.script.run);
 
 const PLANNER_TEMPLATES = {
@@ -3693,6 +3694,61 @@ function jsonp_(params) {
   });
 }
 
+function getSavedCredentials_() {
+  try {
+    const raw = localStorage.getItem('wf-saved-creds');
+    if (!raw) return null;
+    const creds = JSON.parse(raw);
+    if (creds && typeof creds === 'object' && creds.username && creds.password) {
+      return creds;
+    }
+  } catch (e) {}
+  return null;
+}
+
+async function attemptAutoLogin_() {
+  const creds = getSavedCredentials_();
+  if (!creds) return false;
+  const u = String(creds.username || '').trim().toLowerCase();
+  const cfg = window.WF_CONFIG || window.CONFIG || {};
+
+  if (u === 'demo' || (!cfg.apiUrl || cfg.apiUrl.includes('PASTE_WEB_APP_URL'))) {
+    isDemo = true;
+    db = JSON.parse(JSON.stringify(DEMO_DB));
+    sessionStorage.setItem('wf-demo-mode', 'true');
+    localStorage.setItem('wf-demo-mode', 'true');
+    sessionToken = 'demo-session';
+    localStorage.setItem('wf-session-token', sessionToken);
+    document.body.classList.add('wf-authenticated');
+    main.innerHTML = '<div id="wf-root" class="w-full"></div>';
+    root = document.getElementById('wf-root');
+    render();
+    if (badge) badge.textContent = 'Mode Demo (Lokal) · ' + owner;
+    return true;
+  }
+
+  try {
+    const auth = await postApi_('login', { username: creds.username, password: creds.password });
+    if (!auth || !auth.sessionToken) return false;
+    sessionToken = auth.sessionToken;
+    sessionStorage.setItem('wf-session-token', sessionToken);
+    localStorage.setItem('wf-session-token', sessionToken);
+    if (auth.role) {
+      owner = auth.role === 'cowo' ? 'Cowo' : auth.role === 'cewe' ? 'Cewe' : 'Bersama';
+      localStorage.setItem('wf-owner', owner);
+    }
+    db = await api('getAppSnapshot');
+    document.body.classList.add('wf-authenticated');
+    main.innerHTML = '<div id="wf-root" class="w-full"></div>';
+    root = document.getElementById('wf-root');
+    render();
+    if (badge) badge.textContent = 'Data tersambung · ' + owner;
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
 function startGoogleLogin_() {
   if (isDemo) {
     document.body.classList.add('wf-authenticated');
@@ -3720,20 +3776,29 @@ function startGoogleLogin_() {
       db = x;
       render();
       if (badge) badge.textContent = 'Data tersambung · ' + owner;
-    }).catch(() => {
+    }).catch(async () => {
       sessionToken = '';
       sessionStorage.removeItem('wf-session-token');
-      document.body.classList.remove('wf-authenticated');
-      renderLoginBox_();
+      localStorage.removeItem('wf-session-token');
+      const ok = await attemptAutoLogin_();
+      if (!ok) {
+        document.body.classList.remove('wf-authenticated');
+        renderLoginBox_();
+      }
     });
     return;
   }
 
-  renderLoginBox_();
+  attemptAutoLogin_().then(ok => {
+    if (!ok) renderLoginBox_();
+  });
 }
 
 function renderLoginBox_() {
   document.body.classList.remove('wf-authenticated');
+  const saved = getSavedCredentials_();
+  const savedUser = saved ? saved.username || '' : '';
+  const savedPass = saved ? saved.password || '' : '';
   main.innerHTML = `
     <div class="w-full max-w-md bg-surface-container-lowest rounded-3xl p-8 shadow-[0_8px_30px_rgba(90,60,65,0.08)] border border-outline-variant/30 relative overflow-hidden">
       <div class="absolute -top-16 -right-16 w-36 h-36 bg-primary-fixed/40 rounded-full blur-2xl pointer-events-none"></div>
@@ -3759,15 +3824,19 @@ function renderLoginBox_() {
           <span class="font-label-sm text-label-sm text-on-surface font-semibold">Username</span>
           <div class="flex items-center bg-surface-container-low px-3.5 py-2.5 rounded-xl border border-outline-variant/60 focus-within:ring-2 focus-within:ring-primary/30 focus-within:border-primary transition-all">
             <span class="material-symbols-outlined text-on-surface-variant text-[20px] mr-2">person</span>
-            <input name="username" autocomplete="username" required class="bg-transparent w-full text-on-surface font-body-md text-body-md focus:outline-none" placeholder="demo" />
+            <input name="username" autocomplete="username" required value="${esc(savedUser)}" class="bg-transparent w-full text-on-surface font-body-md text-body-md focus:outline-none" placeholder="demo" />
           </div>
         </label>
         <label class="flex flex-col gap-1.5">
           <span class="font-label-sm text-label-sm text-on-surface font-semibold">Password</span>
           <div class="flex items-center bg-surface-container-low px-3.5 py-2.5 rounded-xl border border-outline-variant/60 focus-within:ring-2 focus-within:ring-primary/30 focus-within:border-primary transition-all">
             <span class="material-symbols-outlined text-on-surface-variant text-[20px] mr-2">lock</span>
-            <input name="password" type="password" autocomplete="current-password" required class="bg-transparent w-full text-on-surface font-body-md text-body-md focus:outline-none" placeholder="demo" />
+            <input name="password" type="password" autocomplete="current-password" required value="${esc(savedPass)}" class="bg-transparent w-full text-on-surface font-body-md text-body-md focus:outline-none" placeholder="demo" />
           </div>
+        </label>
+        <label class="flex items-center gap-2.5 cursor-pointer select-none py-1">
+          <input type="checkbox" name="remember" checked class="w-4 h-4 rounded text-primary focus:ring-primary/30 accent-primary cursor-pointer" />
+          <span class="text-xs text-on-surface-variant font-medium">Ingat saya di perangkat ini (Simpan sandi otomatis)</span>
         </label>
         <button class="mt-2 w-full flex items-center justify-center gap-2 bg-primary hover:bg-primary-container text-on-primary font-label-lg text-label-lg py-3 rounded-xl shadow-[0_4px_16px_rgba(142,70,76,0.18)] transition-all hover:scale-[1.01] active:scale-[0.99]" type="submit">
           <span class="material-symbols-outlined text-[20px]">login</span>
@@ -3791,7 +3860,10 @@ function renderLoginBox_() {
       isDemo = true;
       db = JSON.parse(JSON.stringify(DEMO_DB));
       sessionStorage.setItem('wf-demo-mode', 'true');
+      localStorage.setItem('wf-demo-mode', 'true');
       sessionToken = 'demo-session';
+      localStorage.setItem('wf-session-token', sessionToken);
+      localStorage.setItem('wf-saved-creds', JSON.stringify({ username: 'demo', password: 'demo' }));
       document.body.classList.add('wf-authenticated');
       main.innerHTML = '<div id="wf-root" class="w-full"></div>';
       root = document.getElementById('wf-root');
@@ -3802,7 +3874,7 @@ function renderLoginBox_() {
   document.getElementById('wf-login').onsubmit = async e => {
     e.preventDefault();
     const form = e.currentTarget;
-    const button = form.querySelector('button');
+    const button = form.querySelector('button[type="submit"]');
     const errEl = document.getElementById('wf-login-error');
     button.disabled = true;
     button.innerHTML = '<span class="material-symbols-outlined text-[20px] animate-spin">progress_activity</span><span>Memverifikasi…</span>';
@@ -3810,6 +3882,7 @@ function renderLoginBox_() {
     try {
       const credentials = Object.fromEntries(new FormData(form));
       const u = String(credentials.username || '').trim().toLowerCase();
+      const remember = form.elements['remember'] ? form.elements['remember'].checked : true;
       const cfg = window.WF_CONFIG || window.CONFIG || {};
 
       // Demo login shortcut or fallback if GAS backend is not connected yet
@@ -3818,6 +3891,15 @@ function renderLoginBox_() {
         db = JSON.parse(JSON.stringify(DEMO_DB));
         sessionStorage.setItem('wf-demo-mode', 'true');
         sessionToken = 'demo-session';
+        if (remember) {
+          localStorage.setItem('wf-saved-creds', JSON.stringify({ username: credentials.username, password: credentials.password }));
+          localStorage.setItem('wf-demo-mode', 'true');
+          localStorage.setItem('wf-session-token', sessionToken);
+        } else {
+          localStorage.removeItem('wf-saved-creds');
+          localStorage.removeItem('wf-demo-mode');
+          localStorage.removeItem('wf-session-token');
+        }
         document.body.classList.add('wf-authenticated');
         main.innerHTML = '<div id="wf-root" class="w-full"></div>';
         root = document.getElementById('wf-root');
@@ -3831,6 +3913,13 @@ function renderLoginBox_() {
       }
       sessionToken = auth.sessionToken;
       sessionStorage.setItem('wf-session-token', sessionToken);
+      if (remember) {
+        localStorage.setItem('wf-saved-creds', JSON.stringify({ username: credentials.username, password: credentials.password }));
+        localStorage.setItem('wf-session-token', sessionToken);
+      } else {
+        localStorage.removeItem('wf-saved-creds');
+        localStorage.removeItem('wf-session-token');
+      }
       if (auth.role) {
         owner = auth.role === 'cowo' ? 'Cowo' : auth.role === 'cewe' ? 'Cewe' : 'Bersama';
         localStorage.setItem('wf-owner', owner);
@@ -3844,6 +3933,7 @@ function renderLoginBox_() {
     } catch (err) {
       sessionToken = '';
       sessionStorage.removeItem('wf-session-token');
+      localStorage.removeItem('wf-session-token');
       errEl.textContent = err.message || String(err);
       button.disabled = false;
       button.innerHTML = '<span class="material-symbols-outlined text-[20px]">login</span><span>Masuk ke Wedding Fund</span>';
@@ -3879,7 +3969,7 @@ const dateFmt = x => {
 const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
 
 let db = null;
-let owner = localStorage.getItem('wf-owner') || 'Bersama';
+owner = localStorage.getItem('wf-owner') || owner || 'Bersama';
 let filter = { q: '', owner: 'Semua', from: '', to: '' };
 let checkView = 'list';
 let calMonthOffset = 0;
@@ -3942,7 +4032,29 @@ function resolvePage_(name) {
   return byRoute ? byRoute[0] : 'index';
 }
 
+function toggleMobileSidebar_() {
+  const sidebar = document.getElementById('wf-sidebar') || document.querySelector('aside');
+  const backdrop = document.getElementById('wf-sidebar-backdrop');
+  if (!sidebar) return;
+  const isClosed = sidebar.classList.contains('-translate-x-full');
+  if (isClosed) {
+    sidebar.classList.remove('-translate-x-full');
+    if (backdrop) backdrop.classList.remove('hidden');
+  } else {
+    sidebar.classList.add('-translate-x-full');
+    if (backdrop) backdrop.classList.add('hidden');
+  }
+}
+
+function closeMobileSidebar_() {
+  const sidebar = document.getElementById('wf-sidebar') || document.querySelector('aside');
+  const backdrop = document.getElementById('wf-sidebar-backdrop');
+  if (sidebar) sidebar.classList.add('-translate-x-full');
+  if (backdrop) backdrop.classList.add('hidden');
+}
+
 function goToPage_(target) {
+  closeMobileSidebar_();
   page = resolvePage_(target);
   const nextUrl = location.pathname + '?page=' + encodeURIComponent(page);
   history.pushState({}, '', nextUrl);
@@ -7338,7 +7450,13 @@ async function refresh() {
 let currentLightboxImages = [];
 let currentLightboxIndex = 0;
 
-function close() {
+function close(popHistory = true) {
+  if (modal && modal.dataset && modal.dataset.lightboxOpen === '1') {
+    delete modal.dataset.lightboxOpen;
+    if (popHistory && window.history && window.history.state && window.history.state.wfLightbox) {
+      window.history.back();
+    }
+  }
   modal.className = 'hidden';
   modal.innerHTML = '';
   currentLightboxImages = [];
@@ -7351,17 +7469,25 @@ function showLightboxAtIndex(index) {
   if (index >= currentLightboxImages.length) index = 0;
   currentLightboxIndex = index;
 
+  if (!modal.dataset) modal.dataset = {};
+  if (modal.dataset.lightboxOpen !== '1') {
+    modal.dataset.lightboxOpen = '1';
+    try {
+      history.pushState({ wfLightbox: true }, '');
+    } catch (err) {}
+  }
+
   const item = currentLightboxImages[currentLightboxIndex];
   const src = item.src;
   const alt = item.alt || 'Foto Moodboard';
   const rawUrl = item.raw || '';
   const total = currentLightboxImages.length;
 
-  modal.className = 'fixed inset-0 z-50 bg-black/92 backdrop-blur-md flex flex-col items-center justify-between p-3 sm:p-6 select-none';
+  modal.className = 'fixed inset-0 z-50 bg-black/95 backdrop-blur-md flex flex-col items-center justify-between p-3 sm:p-6 select-none';
   modal.innerHTML = `
     <div class="relative w-full max-w-5xl h-full max-h-[92vh] flex flex-col items-center justify-between pointer-events-auto">
-      <!-- Top Bar: Title, Counter & Controls -->
-      <div class="w-full flex items-center justify-between gap-3 pb-3 text-white border-b border-white/10">
+      <!-- Top Bar: Title, Counter & Prominent Close Button -->
+      <div class="w-full flex items-center justify-between gap-3 pb-3 text-white border-b border-white/10 shrink-0">
         <div class="flex items-center gap-2.5 truncate">
           <span class="material-symbols-outlined text-primary-fixed text-2xl">zoom_in</span>
           <span class="text-sm font-semibold truncate text-white/90">${esc(alt)}</span>
@@ -7374,34 +7500,37 @@ function showLightboxAtIndex(index) {
               <span class="hidden sm:inline">Resolusi Asli</span>
             </a>
           ` : ''}
-          <button data-action="close" class="p-2 rounded-full bg-white/15 hover:bg-white/30 text-white transition-colors cursor-pointer" title="Tutup (Esc)">
-            <span class="material-symbols-outlined text-2xl leading-none">close</span>
+          <button type="button" data-action="close" class="min-w-[44px] min-h-[44px] w-11 h-11 rounded-full bg-rose-600 hover:bg-rose-700 active:scale-95 text-white flex items-center justify-center shadow-2xl ring-2 ring-white/90 transition-all cursor-pointer" title="Tutup (Esc)" aria-label="Tutup Gambar">
+            <span class="material-symbols-outlined text-2xl font-bold leading-none">close</span>
           </button>
         </div>
       </div>
 
-      <!-- Center: Image + Prev/Next Buttons -->
-      <div class="relative flex-1 w-full flex items-center justify-center overflow-hidden my-auto py-2" onclick="event.stopPropagation()">
+      <!-- Center: Image + Prev/Next Buttons (Bubbles click naturally) -->
+      <div class="relative flex-1 w-full flex items-center justify-center overflow-hidden my-auto py-2">
         ${total > 1 ? `
-          <button data-action="lightbox-prev" class="absolute left-2 sm:left-4 z-10 p-2.5 sm:p-3 rounded-full bg-black/60 hover:bg-black/90 text-white backdrop-blur-xs transition-colors shadow-lg cursor-pointer" title="Foto Sebelumnya (Panah Kiri)">
-            <span class="material-symbols-outlined text-2xl">chevron_left</span>
+          <button type="button" data-action="lightbox-prev" class="absolute left-2 sm:left-4 z-20 min-w-[44px] min-h-[44px] sm:w-12 sm:h-12 rounded-full bg-black/75 hover:bg-black text-white border-2 border-white/60 shadow-2xl flex items-center justify-center backdrop-blur-xs transition-all active:scale-90 cursor-pointer" title="Foto Sebelumnya (Panah Kiri)">
+            <span class="material-symbols-outlined text-3xl font-bold">chevron_left</span>
           </button>
         ` : ''}
 
-        <img src="${esc(src)}" alt="${esc(alt)}" class="max-w-full max-h-[76vh] object-contain rounded-xl shadow-2xl transition-all" />
+        <img src="${esc(src)}" alt="${esc(alt)}" class="max-w-full max-h-[72vh] object-contain rounded-xl shadow-2xl transition-all" />
 
         ${total > 1 ? `
-          <button data-action="lightbox-next" class="absolute right-2 sm:right-4 z-10 p-2.5 sm:p-3 rounded-full bg-black/60 hover:bg-black/90 text-white backdrop-blur-xs transition-colors shadow-lg cursor-pointer" title="Foto Selanjutnya (Panah Kanan)">
-            <span class="material-symbols-outlined text-2xl">chevron_right</span>
+          <button type="button" data-action="lightbox-next" class="absolute right-2 sm:right-4 z-20 min-w-[44px] min-h-[44px] sm:w-12 sm:h-12 rounded-full bg-black/75 hover:bg-black text-white border-2 border-white/60 shadow-2xl flex items-center justify-center backdrop-blur-xs transition-all active:scale-90 cursor-pointer" title="Foto Selanjutnya (Panah Kanan)">
+            <span class="material-symbols-outlined text-3xl font-bold">chevron_right</span>
           </button>
         ` : ''}
       </div>
 
-      <!-- Bottom Bar: Hint & Close -->
-      <div class="w-full flex items-center justify-between pt-3 text-xs text-white/60 border-t border-white/10">
-        <span class="hidden sm:inline">Navigasi: Gunakan tombol <kbd class="px-1.5 py-0.5 rounded bg-white/20 text-white font-mono">←</kbd> <kbd class="px-1.5 py-0.5 rounded bg-white/20 text-white font-mono">→</kbd> untuk berpindah foto | Tekan <kbd class="px-1.5 py-0.5 rounded bg-white/20 text-white font-mono">Esc</kbd> untuk keluar</span>
-        <span class="sm:hidden">Gunakan panah untuk navigasi</span>
-        <button data-action="close" class="px-4 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 text-white font-semibold transition-colors cursor-pointer">Tutup</button>
+      <!-- Bottom Bar: Hint & Prominent Mobile Close Button -->
+      <div class="w-full flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 text-xs text-white/70 border-t border-white/10 shrink-0">
+        <span class="hidden sm:inline">Navigasi: Tombol <kbd class="px-1.5 py-0.5 rounded bg-white/20 text-white font-mono">←</kbd> <kbd class="px-1.5 py-0.5 rounded bg-white/20 text-white font-mono">→</kbd> | <kbd class="px-1.5 py-0.5 rounded bg-white/20 text-white font-mono">Esc</kbd> untuk keluar</span>
+        <span class="sm:hidden text-white/60 text-center">Geser layar (swipe) atau sentuh panah untuk foto lain</span>
+        <button type="button" data-action="close" class="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 active:scale-95 text-white font-bold flex items-center justify-center gap-2 shadow-xl ring-1 ring-white/50 transition-all cursor-pointer">
+          <span class="material-symbols-outlined text-[20px] font-bold">close</span>
+          <span>Tutup Gambar</span>
+        </button>
       </div>
     </div>
   `;
@@ -7712,6 +7841,9 @@ async function act(action, el) {
     owner = 'Bersama';
     sessionStorage.removeItem('wf-session-token');
     sessionStorage.removeItem('wf-demo-mode');
+    localStorage.removeItem('wf-session-token');
+    localStorage.removeItem('wf-saved-creds');
+    localStorage.removeItem('wf-demo-mode');
     localStorage.removeItem('wf-owner');
     close();
     document.body.classList.remove('wf-authenticated');
@@ -7840,6 +7972,15 @@ async function act(action, el) {
 
   if (action === 'delete') {
     del(el.dataset.sheet, el.dataset.id);
+  }
+
+  if (action === 'toggle-mobile-sidebar') {
+    toggleMobileSidebar_();
+    return;
+  }
+  if (action === 'close-mobile-sidebar') {
+    closeMobileSidebar_();
+    return;
   }
 
   if (action === 'close') close();
@@ -8180,6 +8321,35 @@ document.addEventListener('keydown', e => {
     if (e.key === 'ArrowRight') showLightboxAtIndex(currentLightboxIndex + 1);
   }
 });
+
+window.addEventListener('popstate', () => {
+  if (modal && modal.dataset && modal.dataset.lightboxOpen === '1') {
+    close(false);
+  }
+});
+
+let touchStartX = 0;
+let touchStartY = 0;
+if (modal && modal.addEventListener) {
+  modal.addEventListener('touchstart', e => {
+    if (!modal || !modal.dataset || modal.dataset.lightboxOpen !== '1' || !e.changedTouches || !e.changedTouches[0]) return;
+    touchStartX = e.changedTouches[0].clientX;
+    touchStartY = e.changedTouches[0].clientY;
+  }, { passive: true });
+
+  modal.addEventListener('touchend', e => {
+    if (!modal || !modal.dataset || modal.dataset.lightboxOpen !== '1' || !e.changedTouches || !e.changedTouches[0]) return;
+    const diffX = e.changedTouches[0].clientX - touchStartX;
+    const diffY = e.changedTouches[0].clientY - touchStartY;
+    if (Math.abs(diffX) > 40 && Math.abs(diffX) > Math.abs(diffY)) {
+      if (diffX < 0) {
+        showLightboxAtIndex(currentLightboxIndex + 1);
+      } else {
+        showLightboxAtIndex(currentLightboxIndex - 1);
+      }
+    }
+  }, { passive: true });
+}
 
 bindOwner();
 if (badge) badge.textContent = 'Menghubungkan database…';

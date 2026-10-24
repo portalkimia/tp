@@ -82,17 +82,49 @@ backend.saveRecord('Moodboard', { title: 'Panggung', section: 'Dekorasi', imageU
 assert.equal(tables.Moodboard[0][0], 'id');
 assert.equal(backend.readRecords_('Moodboard')[0].notes, 'Bunga putih');
 
-const element = () => ({ innerHTML: '', textContent: '', style: {}, classList: { add() {}, remove() {} }, appendChild() {}, querySelectorAll: () => [], querySelector: () => ({ disabled: false }), setAttribute() {} });
+const element = (tag = 'div') => {
+  const classes = new Set();
+  return {
+    tagName: tag.toUpperCase(),
+    innerHTML: '',
+    textContent: '',
+    style: {},
+    dataset: {},
+    classList: {
+      add: (...cls) => cls.forEach(c => classes.add(c)),
+      remove: (...cls) => cls.forEach(c => classes.delete(c)),
+      contains: c => classes.has(c)
+    },
+    appendChild() {},
+    querySelectorAll: () => [],
+    querySelector: () => ({ disabled: false }),
+    setAttribute() {},
+    removeAttribute() {},
+    addEventListener() {}
+  };
+};
 const nodes = Object.fromEntries(['wf-root', 'wf-login', 'wf-demo-btn', 'wf-login-error'].map(key => [key, element()]));
+const sidebarNode = element('aside');
+sidebarNode.classList.add('-translate-x-full');
+const backdropNode = element('div');
+backdropNode.classList.add('hidden');
+nodes['wf-sidebar'] = sidebarNode;
+nodes['wf-sidebar-backdrop'] = backdropNode;
 const main = element();
 const session = new Map();
 const storage = { getItem: key => session.get(key) || null, setItem: (key, value) => session.set(key, value), removeItem: key => session.delete(key) };
 const errors = [];
+const historyStack = [];
 const client = {
   URL, URLSearchParams, console, crypto: crypto.webcrypto, location: { href: 'https://local.invalid/', pathname: '/' },
-  history: { pushState() {} }, sessionStorage: storage, localStorage: storage, setTimeout, clearTimeout,
+  history: {
+    state: null,
+    pushState(state) { this.state = state; historyStack.push(state); },
+    back() { historyStack.pop(); this.state = historyStack[historyStack.length - 1] || null; }
+  },
+  sessionStorage: storage, localStorage: storage, setTimeout, clearTimeout,
   alert: value => errors.push(value), document: {
-    addEventListener() {}, querySelector: query => query === 'main' ? main : null, querySelectorAll: () => [],
+    addEventListener() {}, querySelector: query => query === 'main' ? main : (query === 'aside' ? sidebarNode : null), querySelectorAll: () => [],
     getElementById: id => nodes[id] || null, createElement: element, body: element()
   }
 };
@@ -108,7 +140,15 @@ window.audit = {
   setMoodboardVendor: value => moodboardVendor = value,
   setReport: value => report = value, setDownload: fn => download = fn,
   markLoggedIn: () => sessionToken = 'old-token', DEMO_DB,
-  getModal: () => modal
+  getModal: () => modal,
+  getSavedCredentials: () => getSavedCredentials_(),
+  attemptAutoLogin: () => attemptAutoLogin_(),
+  toggleMobileSidebar: () => toggleMobileSidebar_(),
+  closeMobileSidebar: () => closeMobileSidebar_(),
+  getCurrentLightboxIndex: () => currentLightboxIndex,
+  getHistoryStack: () => historyStack,
+  getSidebarNode: () => document.getElementById('wf-sidebar'),
+  getBackdropNode: () => document.getElementById('wf-sidebar-backdrop')
 };
 })();`, client);
 const app = client.audit;
@@ -204,8 +244,30 @@ await app.act('zoom-image', {
 const modalEl = app.getModal();
 assert.match(modalEl.innerHTML, /Koleksi 10 Foto 1/, 'Modal zoom harus menampilkan judul foto');
 assert.match(modalEl.innerHTML, /Resolusi Asli/, 'Modal zoom harus menyediakan tombol tautan resolusi asli');
+assert.match(modalEl.innerHTML, /bg-rose-600/, 'Tombol tutup harus berlatar belakang merah solid kontras tinggi');
+assert.match(modalEl.innerHTML, /ring-2 ring-white/, 'Tombol tutup harus memiliki ring putih agar tidak menyatu dengan background gelap');
+assert.match(modalEl.innerHTML, /Tutup Gambar/, 'Harus menyediakan tombol teks Tutup Gambar untuk kemudahan mobile');
 await app.act('close');
 assert.equal(modalEl.className, 'hidden', 'Modal zoom harus tertutup saat aksi close');
+
+// Uji mobile sidebar drawer toggle & backdrop
+assert.equal(sidebarNode.classList.contains('-translate-x-full'), true, 'Sidebar mobile awal harus tertutup');
+await app.act('toggle-mobile-sidebar');
+assert.equal(sidebarNode.classList.contains('-translate-x-full'), false, 'Mobile sidebar harus terbuka setelah toggle');
+assert.equal(backdropNode.classList.contains('hidden'), false, 'Backdrop mobile sidebar harus muncul saat sidebar terbuka');
+await app.act('toggle-mobile-sidebar');
+assert.equal(sidebarNode.classList.contains('-translate-x-full'), true, 'Mobile sidebar harus tertutup setelah toggle ulang');
+assert.equal(backdropNode.classList.contains('hidden'), true, 'Backdrop mobile sidebar harus tersembunyi saat sidebar tertutup');
+
+// Uji penyimpanan kredensial lokal & auto-login
+storage.setItem('wf-saved-creds', JSON.stringify({ username: 'demo', password: 'demo' }));
+const savedCreds = app.getSavedCredentials();
+assert.equal(savedCreds.username, 'demo');
+assert.equal(savedCreds.password, 'demo');
+await app.act('logout');
+assert.equal(storage.getItem('wf-saved-creds'), null, 'Logout harus membersihkan saved credentials');
+assert.equal(storage.getItem('wf-session-token'), null, 'Logout harus membersihkan session token');
+app.setDb(demo);
 
 // Uji penyimpanan multi-foto backend dan overflow chunking imageUrl..imageUrl6
 const longUrlChunk1 = 'https://example.com/' + 'a'.repeat(30000);

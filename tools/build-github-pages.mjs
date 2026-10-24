@@ -19,7 +19,7 @@ if (!configMarker.test(html) || !clientMarker.test(html)) {
 html = html.replace(configMarker, '<script src="./config.js"></script>')
   .replace(clientMarker, '<script>\n' + clientMatch[1] + '\n</script>')
   .replace(/(<main\b[^>]*>)[\s\S]*?(<\/main>)/i, '$1<div id="wf-root" class="w-full"></div>$2')
-  .replace('</head>', '<style>body:not(.wf-authenticated) aside,body:not(.wf-authenticated) header,body:not(.wf-authenticated) #wedding-fund-connection{display:none!important}body:not(.wf-authenticated) .pl-64{padding-left:0!important}main{visibility:hidden}.wf-authenticated main{visibility:visible}body:not(.wf-authenticated) main{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:1.5rem!important}</style></head>');
+  .replace('</head>', '<style>body:not(.wf-authenticated) aside,body:not(.wf-authenticated) header,body:not(.wf-authenticated) #wedding-fund-connection,body:not(.wf-authenticated) #wf-sidebar-backdrop{display:none!important}body:not(.wf-authenticated) .pl-64,body:not(.wf-authenticated) [class*="pl-64"]{padding-left:0!important}main{visibility:hidden}.wf-authenticated main{visibility:visible}body:not(.wf-authenticated) main{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:1.5rem!important}</style></head>');
 await mkdir(output, { recursive: true });
 await writeFile(resolve(root, 'index.html'), html, 'utf8');
 await writeFile(resolve(output, 'index.html'), html, 'utf8');
