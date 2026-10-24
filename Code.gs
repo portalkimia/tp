@@ -25,7 +25,7 @@ const SHEETS = {
   Seserahan: ['id', 'name', 'tab', 'group', 'shopUrl', 'qty', 'unitPrice', 'estimatedAmount', 'actualAmount', 'specs', 'purchased', 'dueDate', 'owner', 'notes', 'updatedAt'],
   Rundown: ['id', 'time', 'duration', 'session', 'activity', 'pic', 'equipment', 'completed', 'notes', 'sortOrder', 'updatedAt'],
   Guests: ['id', 'name', 'group', 'pax', 'relation', 'phone', 'address', 'eventScope', 'inviteSent', 'rsvpStatus', 'notes', 'updatedAt'],
-  Moodboard: ['id', 'title', 'section', 'imageUrl', 'sourceUrl', 'color', 'notes', 'vendorId', 'sortOrder', 'updatedAt'],
+  Moodboard: ['id', 'title', 'subtitle', 'section', 'layout', 'imageUrl', 'imageUrl2', 'imageUrl3', 'imageUrl4', 'imageUrl5', 'imageUrl6', 'sourceUrl', 'color', 'calloutTitle', 'calloutNotes', 'notes', 'rightNotes', 'dontsNotes', 'vendorId', 'vendorLabel', 'sortOrder', 'updatedAt'],
   Settings: ['key', 'value', 'updatedAt']
 };
 
@@ -405,6 +405,30 @@ function saveRecord(sheetName, record) {
     if (sheetName === 'Transactions') validateVendorPayment_(merged, record.id);
     if (sheetName === 'Vendors') validateVendorContract_(merged, id);
 
+    if (sheetName === 'Moodboard') {
+      const rawUrls = String(merged.imageUrl || '').split(/[\r\n]+/).map(function(s) { return s.trim(); }).filter(Boolean);
+      const chunks = ['', '', '', '', '', ''];
+      let chunkIdx = 0;
+      rawUrls.forEach(function(u) {
+        if (chunkIdx >= 6) return;
+        const testVal = chunks[chunkIdx] ? (chunks[chunkIdx] + '\n' + u) : u;
+        if (testVal.length > 45000 && chunks[chunkIdx].length > 0) {
+          chunkIdx++;
+          if (chunkIdx < 6) {
+            chunks[chunkIdx] = u;
+          }
+        } else {
+          chunks[chunkIdx] = testVal;
+        }
+      });
+      merged.imageUrl = chunks[0] || '';
+      merged.imageUrl2 = chunks[1] || '';
+      merged.imageUrl3 = chunks[2] || '';
+      merged.imageUrl4 = chunks[3] || '';
+      merged.imageUrl5 = chunks[4] || '';
+      merged.imageUrl6 = chunks[5] || '';
+    }
+
     const row = headers.map(function(key) {
       if (key === 'id') return id;
       if (key === 'updatedAt') return now;
@@ -481,7 +505,10 @@ function saveSettings(values) {
     'partnerOneName', 'partnerTwoName', 'weddingDate', 'guestTarget',
     'budgetTarget', 'motto', 'currency', 'remindersEnabled', 'reminderDays', 'roleLabels',
     'moodboardTheme', 'moodboardBrief', 'moodboardPalette',
-    'venueLocation', 'rundownNotes', 'emergencyPic'
+    'venueLocation', 'rundownNotes', 'emergencyPic',
+    'moodboardConceptPara1', 'moodboardConceptPara2', 'moodboardStyle', 'moodboardMood',
+    'moodboardVenueName', 'moodboardVenueAddress', 'moodboardVenueImages',
+    'moodboardPaletteNames', 'moodboardPaletteNote', 'moodboardPaletteImage', 'moodboardShowOverview'
   ];
 
   const lock = LockService.getScriptLock();
@@ -3936,10 +3963,17 @@ function readRecords_(name) {
   return values.filter(function(row) {
     return row.some(function(cell) { return cell !== ''; });
   }).map(function(row) {
-    return headers.reduce(function(out, key, i) {
+    const record = headers.reduce(function(out, key, i) {
       out[key] = serializeCell_(row[i]);
       return out;
     }, {});
+    if (name === 'Moodboard') {
+      const parts = [record.imageUrl, record.imageUrl2, record.imageUrl3, record.imageUrl4, record.imageUrl5, record.imageUrl6]
+        .filter(function(v) { return v !== undefined && v !== null && String(v).trim() !== ''; })
+        .map(function(s) { return String(s).trim(); });
+      record.imageUrl = parts.join('\n');
+    }
+    return record;
   });
 }
 
@@ -4051,16 +4085,23 @@ function validateRecord_(sheetName, r) {
   }
 
   if (sheetName === 'Moodboard') {
-    ['imageUrl', 'sourceUrl'].forEach(function(key) {
-      if (r[key]) {
-        const urls = String(r[key]).split(/[\s,]+/).filter(Boolean);
-        if (!urls.length || !urls.every(function(u) {
-          return /^https:\/\/[^\s<>"']+$/i.test(u) || (key === 'imageUrl' && /^data:image\/(?:jpeg|jpg|png|webp);base64,[a-z0-9+/=]+$/i.test(u) && u.length <= 48000);
-        })) {
-          throw new Error('Tautan moodboard harus memakai HTTPS.');
-        }
+    if (r.imageUrl) {
+      const urls = String(r.imageUrl).split(/[\r\n\s,]+/).filter(Boolean);
+      if (urls.length > 24) {
+        throw new Error('Maksimal 24 foto per item moodboard.');
       }
-    });
+      if (!urls.every(function(u) {
+        return /^https:\/\/[^\s<>"']+$/i.test(u) || (/^data:image\/(?:jpeg|jpg|png|webp);base64,[a-z0-9+/=]+$/i.test(u) && u.length <= 45000);
+      })) {
+        throw new Error('Tautan foto moodboard harus berupa URL HTTPS yang valid atau data gambar base64 (maks 45KB per gambar).');
+      }
+    }
+    if (r.sourceUrl) {
+      const urls = String(r.sourceUrl).split(/[\s,]+/).filter(Boolean);
+      if (!urls.every(function(u) { return /^https:\/\/[^\s<>"']+$/i.test(u); })) {
+        throw new Error('Tautan moodboard harus memakai HTTPS.');
+      }
+    }
     if (r.color && !/^#[0-9a-f]{6}$/i.test(String(r.color))) {
       throw new Error('Warna harus berformat #RRGGBB.');
     }

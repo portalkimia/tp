@@ -173,6 +173,35 @@ demo.Moodboard.push({
 const briefWithDrive = app.moodboard();
 assert.match(briefWithDrive, /drive\.google\.com\/thumbnail\?id=1AbCdEfGhIjKlMnOpQrStUvWxYz/);
 
+// Uji rendering 10 foto pada moodboard (tanpa .slice(0, 4) & auto-continuation slide)
+const tenImages = Array.from({ length: 10 }, (_, i) => `https://example.com/item-${i + 1}.jpg`).join('\n');
+demo.Moodboard.push({
+  id: 'ten-photos',
+  title: 'Koleksi 10 Foto',
+  section: 'Dekorasi',
+  layout: 'decoration',
+  imageUrl: tenImages,
+  notes: 'Arahan lengkap',
+  vendorId: 'ven-1'
+});
+const briefTen = app.moodboard();
+const imgMatches = briefTen.match(/<img[^>]+item-\d+\.jpg/g);
+assert.equal(imgMatches.length, 10, 'Semua 10 foto harus dirender penuh ke dalam slide tanpa terpotong');
+assert.match(briefTen, /Koleksi 10 Foto \(Lanjutan\)/, 'Slide lanjutan harus dibuat otomatis untuk sisa foto');
+
+// Uji penyimpanan multi-foto backend dan overflow chunking imageUrl..imageUrl6
+const longUrlChunk1 = 'https://example.com/' + 'a'.repeat(30000);
+const longUrlChunk2 = 'https://example.com/' + 'b'.repeat(30000);
+const longCombined = longUrlChunk1 + '\n' + longUrlChunk2;
+backend.saveRecord('Moodboard', {
+  title: 'Long Photo Item',
+  section: 'Dekorasi',
+  imageUrl: longCombined
+});
+const savedMb = backend.readRecords_('Moodboard').find(r => r.title === 'Long Photo Item');
+assert.ok(savedMb, 'Data moodboard tersimpan harus ditemukan');
+assert.equal(savedMb.imageUrl.includes(longUrlChunk1) && savedMb.imageUrl.includes(longUrlChunk2), true, 'readRecords_ harus merekonsiliasi chunk kolom imageUrl..imageUrl6');
+
 // Uji rendering halaman baru (Seserahan, Rundown, Guests)
 const sesHtml = app.seserahan();
 assert.match(sesHtml, /Seserahan, Belanja & Souvenir/);
