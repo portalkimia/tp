@@ -107,7 +107,8 @@ window.audit = {
   seserahan, rundown, guests,
   setMoodboardVendor: value => moodboardVendor = value,
   setReport: value => report = value, setDownload: fn => download = fn,
-  markLoggedIn: () => sessionToken = 'old-token', DEMO_DB
+  markLoggedIn: () => sessionToken = 'old-token', DEMO_DB,
+  getModal: () => modal
 };
 })();`, client);
 const app = client.audit;
@@ -188,6 +189,23 @@ const briefTen = app.moodboard();
 const imgMatches = briefTen.match(/<img[^>]+item-\d+\.jpg/g);
 assert.equal(imgMatches.length, 10, 'Semua 10 foto harus dirender penuh ke dalam slide tanpa terpotong');
 assert.match(briefTen, /Koleksi 10 Foto \(Lanjutan\)/, 'Slide lanjutan harus dibuat otomatis untuk sisa foto');
+
+// Uji fungsionalitas zoom / pembesaran gambar moodboard saat diklik
+assert.match(briefTen, /data-action="zoom-image"/, 'Gambar moodboard harus memiliki trigger zoom saat diklik');
+assert.match(briefTen, /cursor-zoom-in/, 'Gambar moodboard harus memiliki indikator kursor zoom-in');
+
+await app.act('zoom-image', {
+  dataset: {
+    src: 'https://example.com/item-1.jpg',
+    raw: 'https://example.com/item-1.jpg',
+    alt: 'Koleksi 10 Foto 1'
+  }
+});
+const modalEl = app.getModal();
+assert.match(modalEl.innerHTML, /Koleksi 10 Foto 1/, 'Modal zoom harus menampilkan judul foto');
+assert.match(modalEl.innerHTML, /Resolusi Asli/, 'Modal zoom harus menyediakan tombol tautan resolusi asli');
+await app.act('close');
+assert.equal(modalEl.className, 'hidden', 'Modal zoom harus tertutup saat aksi close');
 
 // Uji penyimpanan multi-foto backend dan overflow chunking imageUrl..imageUrl6
 const longUrlChunk1 = 'https://example.com/' + 'a'.repeat(30000);
